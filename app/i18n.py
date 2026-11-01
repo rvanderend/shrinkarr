@@ -8,6 +8,7 @@ from . import db
 TEXTS = {
     "en": {
         "gone": "The file no longer exists in Sonarr/Radarr",
+        "read_only": "The folder is read-only for Shrinkarr ({folder}); the original was kept",
         "no_video": "No video stream found",
         "already": "Already {codec}",
         "bad_subs": "Subtitles in a format MKV does not support: {codecs}",
@@ -54,6 +55,7 @@ TEXTS = {
     },
     "nl": {
         "gone": "Bestand bestaat niet meer in Sonarr/Radarr",
+        "read_only": "De map is alleen-lezen voor Shrinkarr ({folder}); origineel blijft staan",
         "no_video": "Geen videostroom gevonden",
         "already": "Is al {codec}",
         "bad_subs": "Ondertitels in een formaat dat MKV niet ondersteunt: {codecs}",

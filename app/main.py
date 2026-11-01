@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import arr, auth, auto, config, db, encoders, gpu, media
-from .worker import WORKER
+from .worker import WORKER, writable
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -210,7 +210,7 @@ async def library(preset: str | None = None):
         s = _summary(it, preset, model, active, saved)
         s.pop("_files")
         items.append(s)
-    roots = [r for app_ in arr.APPS for r in arr.LIB.roots.get(app_, [])]
+    roots = [{**r, "writable": writable(arr.to_local(r["path"]))} for app_ in arr.APPS for r in arr.LIB.roots.get(app_, [])]
     return {"items": items, "preset": preset, "refreshed": arr.LIB.refreshed, "error": arr.LIB.error,
             "learned": model.count, "roots": roots,
             "configured": any(arr.configured(a) for a in arr.APPS)}
@@ -301,7 +301,7 @@ class EnqueueReq(BaseModel):
 async def enqueue(req: EnqueueReq):
     preset = _preset(req.preset)
     model = await _model()
-    added = 0
+    added = read_only = 0
     for ref in req.items:
         it = arr.LIB.item(ref.kind, ref.id)
         if not it:
@@ -312,6 +312,9 @@ async def enqueue(req: EnqueueReq):
                 continue
             if f["efficient"] or db.active_job_for(f["kind"], f["fileId"]):
                 continue
+            if not writable(Path(f["path"]).parent):
+                read_only += 1
+                continue
             e = media.estimate(f, f["size"], preset, model, sample)
             title = f"{it['title']} ({it['year']})" if it["kind"] == "movie" and it.get("year") else it["title"]
             db.add_job(kind=f["kind"], arr_id=it["id"], file_id=f["fileId"], title=title,
@@ -319,7 +322,7 @@ async def enqueue(req: EnqueueReq):
                        preset=preset, size_before=f["size"], est_size=e["size"], est_seconds=e["seconds"])
             added += 1
     WORKER.wake.set()
-    return {"added": added}
+    return {"added": added, "readOnly": read_only}
 
 
 JOB_COLS = ("id, kind, arr_id, file_id, title, subtitle, path, preset, status, stage, progress, fps, speed, eta, "

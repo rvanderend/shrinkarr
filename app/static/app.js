@@ -96,6 +96,7 @@ async function renderLibrary() {
   const f = S.f;
   v.innerHTML = `
     ${S.lib.error ? `<div class="banner warn">${esc(S.lib.error)}</div>` : ''}
+    ${S.lib.roots.some((r) => !r.writable) ? `<div class="banner warn">${t('lib.readOnly', { list: S.lib.roots.filter((r) => !r.writable).map((r) => esc(r.label)).join(', ') })}</div>` : ''}
     <div class="lib-head">
       <section class="ringcard" id="lib-stats" aria-label="${t('lib.storage')}"></section>
       <div class="lib-controls">
@@ -337,6 +338,7 @@ function updateSelectionBar() {
     try {
       const r = await post('/api/jobs', { items: items.map((i) => ({ kind: i.kind, id: i.id })), preset: S.preset });
       toast(t('toast.added', { n: r.added }), 'good');
+      if (r.readOnly) toast(t('toast.readOnly', { n: r.readOnly }), 'bad');
       $('#select-btn').click();
       await pollJobs(); updateGrid();
     } catch (e) { toast(e.message, 'bad'); }
@@ -488,6 +490,7 @@ function renderDetail() {
     try {
       const r = await post('/api/jobs', { items: [{ kind: d.kind, id: d.id, fileIds: [...sel] }], preset: d.preset });
       toast(t('toast.added', { n: r.added }), 'good');
+      if (r.readOnly) toast(t('toast.readOnly', { n: r.readOnly }), 'bad');
       S.detail.sel = null;
       await pollJobs();
       openDetail(d.kind, d.id, d.preset);

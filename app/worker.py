@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import time
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -56,6 +57,11 @@ def keep_location(kind: str, src: str) -> Path:
         if src.startswith(base + "/"):
             return Path(base) / KEEP_DIR / src[len(base) + 1:]
     return Path(src).parent / KEEP_DIR / Path(src).name
+
+
+def writable(folder: str | Path) -> bool:
+    """Can Shrinkarr create files here? False on a read-only mount or without permission."""
+    return os.access(folder, os.W_OK | os.X_OK)
 
 
 def _keep(kind: str, src: str) -> Path:
@@ -174,6 +180,9 @@ class Worker:
                 raise Skip(tr("gone"))
             src = arr.to_local(info["path"])
             db.update_job(jid, path=src)
+        # Check this before hours of GPU time: replacing would fail anyway.
+        if not writable(Path(src).parent):
+            raise Skip(tr("read_only", folder=Path(src).parent))
         st = os.stat(src)
         p = await media.probe(src)
         if not media.streams(p, "video"):
@@ -289,9 +298,14 @@ class Worker:
                 kept = _keep(job["kind"], src)
             os.replace(tmp, final)
         except BaseException:
-            tmp.unlink(missing_ok=True)
+            # Clean up without hiding the real error (the folder may have become read-only, for example).
+            with suppress(OSError):
+                tmp.unlink(missing_ok=True)
             if kept and kept.exists() and not os.path.exists(src):
-                os.rename(kept, src)  # put the original back
+                try:
+                    os.rename(kept, src)  # put the original back
+                except OSError:
+                    log.error("Could not put the original back: %s is still in %s", src, kept)
             raise
         if final != Path(src) and not kept:
             os.unlink(src)

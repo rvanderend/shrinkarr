@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2
+
+- A file in a folder Shrinkarr can't write to (a read-only mount, or no permission) is skipped before encoding, instead of failing at the replace step after the whole encode. Such files are not queued, and the Library page warns about read-only root folders. (#6)
+- When replacing fails, cleaning up no longer adds a second error to the log, and putting a kept original back can't be cut short. (#6)
+
 ## 1.0.1
 
 - **Keep originals** (Settings → Encoding): keep a replaced original for 1–30 days, so a conversion can be undone from the History page. The original is moved (not copied) to a hidden `.shrinkarr-originals` folder in the root folder and deleted when its time is up. Off by default. (#4)
