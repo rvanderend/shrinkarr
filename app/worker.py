@@ -1,0 +1,318 @@
+"""The queue: one job at a time on the GPU.
+
+`stage` is stored as a code (analyze, encode, verify, ...); the web UI translates it.
+"""
+import asyncio
+import logging
+import os
+import shutil
+import time
+from datetime import datetime
+from pathlib import Path
+
+from . import arr, config, db, encoders, media
+from .i18n import tr
+
+log = logging.getLogger("shrinkarr.worker")
+
+
+class Skip(Exception):
+    """Not an error, but the original stays (for example too little gain)."""
+
+
+class Cancelled(Exception):
+    pass
+
+
+def _between(a: str, b: str) -> bool:
+    now = datetime.now().strftime("%H:%M")
+    return a <= now < b if a <= b else (now >= a or now < b)
+
+
+def in_window(s: dict) -> bool:
+    return not s["window_enabled"] or _between(s["window_start"], s["window_end"])
+
+
+def eligible(job: dict, s: dict) -> bool:
+    """Manual jobs may always start; automatic ones only inside their window and after the delay."""
+    if job.get("source") != "auto":
+        return True
+    return (job.get("not_before") or 0) <= time.time() and _between(s["auto_window_start"], s["auto_window_end"])
+
+
+PLEX_WAIT_MAX = 12 * 3600  # waiting longer than this for a viewer: skip after all
+
+
+class Worker:
+    def __init__(self):
+        self.wake = asyncio.Event()
+        self.current: int | None = None
+        self.proc: dict = {}
+        self.cancel_requested = False
+        self.state = "idle"  # idle | running | paused | waiting | waiting_auto | setup
+
+    async def run(self):
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        # Leftovers of a conversion that was cut off by a restart
+        for f in config.WORK_DIR.glob("job-*"):
+            f.unlink(missing_ok=True)
+        while True:
+            try:
+                s = db.get_settings()
+                queued = db.q("SELECT * FROM jobs WHERE status='queued' ORDER BY position")
+                job = next((j for j in queued if eligible(j, s)), None)
+                if not s["setup_done"]:
+                    self.state = "setup"
+                elif s["paused"]:
+                    self.state = "paused"
+                elif queued and not in_window(s):
+                    self.state = "waiting"
+                elif job:
+                    self.state = "running"
+                    await self.process(job)
+                    continue
+                elif queued:
+                    self.state = "waiting_auto"  # only automatic jobs, outside their window
+                else:
+                    self.state = "idle"
+                self.wake.clear()
+                try:
+                    await asyncio.wait_for(self.wake.wait(), timeout=15)
+                except asyncio.TimeoutError:
+                    pass
+            except Exception:  # noqa: BLE001
+                log.exception("Error in the worker loop")
+                await asyncio.sleep(10)
+
+    def cancel(self, job_id: int):
+        if self.current == job_id:
+            self.cancel_requested = True
+            proc = self.proc.get("proc")
+            if proc and proc.returncode is None:
+                proc.terminate()
+
+    # --- one job --------------------------------------------------------------
+
+    async def process(self, job: dict):
+        jid = job["id"]
+        self.current, self.cancel_requested, self.proc = jid, False, {}
+        out = config.WORK_DIR / f"job-{jid}.mkv"
+        cc = config.WORK_DIR / f"job-{jid}.cc.srt"
+        db.update_job(jid, status="running", stage="analyze", started=time.time(), progress=0,
+                      message="", log="", finished=None, size_after=None)
+        try:
+            result = await self._process(job, out, cc)
+            db.update_job(jid, status="done", stage="done", progress=1, finished=time.time(), eta=0, **result)
+        except Cancelled:
+            db.update_job(jid, status="cancelled", stage="cancelled", finished=time.time())
+        except Skip as e:
+            db.update_job(jid, status="skipped", stage="skipped", message=str(e), finished=time.time())
+        except media.FFmpegError as e:
+            if self.cancel_requested:
+                db.update_job(jid, status="cancelled", stage="cancelled", finished=time.time())
+            else:
+                db.update_job(jid, status="failed", stage="failed", message=str(e), log=e.log,
+                              finished=time.time())
+        except Exception as e:  # noqa: BLE001
+            log.exception("Job %s failed", jid)
+            db.update_job(jid, status="failed", stage="failed", message=f"{type(e).__name__}: {e}",
+                          finished=time.time())
+        finally:
+            for f in (out, cc):
+                f.unlink(missing_ok=True)
+            self.current = None
+            self.proc = {}
+
+    def _check_cancel(self):
+        if self.cancel_requested:
+            raise Cancelled()
+
+    async def _process(self, job: dict, out: Path, cc: Path) -> dict:
+        jid = job["id"]
+        preset = job["preset"] if job["preset"] in config.PRESETS else "balanced"
+        enc = await encoders.resolve()
+        q = config.PRESETS[preset]["q"][enc["encoder"]]
+
+        # 1. Analyse: current path, codec, streams
+        src = job["path"]
+        if not os.path.exists(src):
+            info = await arr.resolve_file(job["kind"], job["file_id"])
+            if not info:
+                raise Skip(tr("gone"))
+            src = arr.to_local(info["path"])
+            db.update_job(jid, path=src)
+        st = os.stat(src)
+        p = await media.probe(src)
+        if not media.streams(p, "video"):
+            raise Skip(tr("no_video"))
+        vi = media.video_info(p)
+        if vi["codec"] in media.EFFICIENT:
+            raise Skip(tr("already", codec=vi["codec"].upper()))
+        plan = media.plan_streams(p)
+        if plan["unsupported_subs"]:
+            raise Skip(tr("bad_subs", codecs=", ".join(plan["unsupported_subs"])))
+        dur = media.duration_of(p)
+        src_vbytes = media.video_bytes(p, st.st_size)
+        if shutil.disk_usage(config.WORK_DIR).free < st.st_size * 1.1:
+            raise RuntimeError(tr("no_space_work", path=config.WORK_DIR))
+        db.update_job(jid, size_before=st.st_size)
+
+        # 2. Keep closed captions in the video stream as SRT
+        cc_path = None
+        if vi["closed_captions"]:
+            db.update_job(jid, stage="cc")
+            if not await media.extract_cc(src, str(cc), config.WORK_DIR):
+                raise Skip(tr("cc_failed"))
+            cc_path = str(cc)
+            self._check_cancel()
+
+        # 3. Convert
+        db.update_job(jid, stage="encode", progress=0)
+        hw = encoders.can_hw_decode(enc, vi)
+        started = time.monotonic()
+        last_write = [0.0]
+
+        async def on_progress(pr):
+            sec, fps, speed, size = media.parse_progress(pr)
+            now = time.monotonic()
+            if now - last_write[0] < 1 and pr.get("progress") != "end":
+                return
+            last_write[0] = now
+            frac = min(sec / dur, 1) if dur else 0
+            eta = (dur - sec) / speed if speed > 0 else None
+            db.update_job(jid, progress=frac, fps=fps, speed=speed, eta=eta, cur_size=size)
+
+        try:
+            res = await media.run_ffmpeg(media.build_cmd(p, src, str(out), enc, q, hw, cc_srt=cc_path),
+                                         on_progress, self.proc)
+        except media.FFmpegError as e:
+            self._check_cancel()
+            if not hw:
+                raise
+            log.warning("Hardware decoding failed (%s); trying again with software decoding", e)
+            db.update_job(jid, stage="encode_sw", progress=0)
+            hw = False
+            res = await media.run_ffmpeg(media.build_cmd(p, src, str(out), enc, q, False, cc_srt=cc_path),
+                                         on_progress, self.proc)
+        self._check_cancel()
+        enc_seconds = time.monotonic() - started
+
+        # 4. Verify
+        db.update_job(jid, stage="verify", eta=None)
+        op = await media.probe(str(out))
+        new_size = out.stat().st_size
+        ov = media.streams(op, "video")
+        if not ov or ov[0].get("codec_name") != "hevc":
+            raise RuntimeError(tr("no_hevc"))
+        n_audio, n_subs = len(media.streams(op, "audio")), len(media.streams(op, "subtitle"))
+        want_subs = len(plan["subs"]) + (1 if cc_path else 0)
+        if n_audio != len(plan["audio"]):
+            raise RuntimeError(tr("audio_count", got=n_audio, want=len(plan["audio"])))
+        if n_subs != want_subs:
+            raise RuntimeError(tr("sub_count", got=n_subs, want=want_subs))
+        odur = media.duration_of(op)
+        if abs(odur - dur) > max(2.0, dur * 0.005):
+            raise RuntimeError(tr("duration", got=odur, want=dur))
+
+        # Learn for the next estimates
+        bkt = media.bucket(vi["width"], vi["height"])
+        fps = float(res.get("frame") or 0) / enc_seconds if enc_seconds else 0
+        new_vbytes = res.get("video_bytes") or (new_size - (st.st_size - src_vbytes))
+        ratio = new_vbytes / src_vbytes if src_vbytes else None
+        pixels = max(vi["width"] * vi["height"], 1) * vi["fps"]
+        src_bpp = src_vbytes * 8 / dur / pixels if dur else 0
+        db.add_observation(preset, bkt, vi["codec"], ratio if src_bpp >= 0.08 else None,
+                           fps if hw or enc["encoder"] == "cpu" else None, "job", enc["encoder"])
+
+        s = db.get_settings()
+        saved_pct = (1 - new_size / st.st_size) * 100
+        if saved_pct < s["min_savings"]:
+            raise Skip(tr("too_little", pct=saved_pct, min=s["min_savings"]))
+
+        # 5. Don't replace while someone is watching this file in Plex
+        await self._wait_for_viewers(jid, src)
+
+        # 6. Replace
+        self._check_cancel()
+        st2 = os.stat(src)
+        if (st2.st_size, st2.st_mtime) != (st.st_size, st.st_mtime):
+            raise Skip(tr("changed"))
+        folder = Path(src).parent
+        final = folder / (Path(src).stem + ".mkv")
+        if final != Path(src) and final.exists():
+            raise RuntimeError(tr("exists", name=final.name))
+        if shutil.disk_usage(folder).free < new_size + 1e9:
+            raise RuntimeError(tr("no_space_nas"))
+        tmp = folder / f".{final.stem}.shrinkarr-tmp"
+        db.update_job(jid, stage="replace", progress=0)
+        try:
+            await asyncio.to_thread(self._copy, out, tmp, jid, new_size)
+            if tmp.stat().st_size != new_size:
+                raise RuntimeError(tr("copy_incomplete"))
+            os.chmod(tmp, st.st_mode & 0o777)
+            os.replace(tmp, final)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        if final != Path(src):
+            os.unlink(src)
+        log.info("Replaced: %s (%d -> %d bytes)", final, st.st_size, new_size)
+
+        # 7. Update Sonarr/Radarr and Plex
+        db.update_job(jid, stage="update", path=str(final), size_after=new_size)
+        notes = []
+        try:
+            await arr.rescan(job["kind"], job["arr_id"])
+        except Exception as e:  # noqa: BLE001
+            notes.append(tr("rescan_failed", app="Radarr" if job["kind"] == "movie" else "Sonarr", err=e))
+        try:
+            await arr.plex_refresh(str(final))
+        except Exception as e:  # noqa: BLE001
+            notes.append(tr("plex_failed", err=e))
+        asyncio.create_task(self._refresh_later(job["kind"], job["arr_id"]))
+        msg = tr("smaller", pct=saved_pct) + (tr("plus_cc") if cc_path else "") + \
+            ("; " + "; ".join(notes) if notes else "")
+        return {"size_after": new_size, "message": msg, "path": str(final)}
+
+    async def _wait_for_viewers(self, jid: int, src: str):
+        start = time.monotonic()
+        waiting = False
+        while True:
+            playing = await arr.plex_playing()
+            if playing is None:
+                return  # no Plex configured or not reachable: nothing to check
+            if src not in playing:
+                if waiting:
+                    await asyncio.sleep(30)  # give Plex a moment to let go of the file
+                return
+            if not waiting:
+                waiting = True
+                db.update_job(jid, stage="wait_plex", eta=None)
+                log.info("%s is being watched; replacing waits", src)
+            if time.monotonic() - start > PLEX_WAIT_MAX:
+                raise Skip(tr("watched_too_long"))
+            for _ in range(6):
+                self._check_cancel()
+                await asyncio.sleep(10)
+
+    def _copy(self, src: Path, dst: Path, jid: int, total: int):
+        done, last = 0, 0.0
+        with open(src, "rb") as fi, open(dst, "wb") as fo:
+            while chunk := fi.read(16 * 1024 * 1024):
+                if self.cancel_requested:
+                    raise Cancelled()
+                fo.write(chunk)
+                done += len(chunk)
+                if time.monotonic() - last > 1:
+                    last = time.monotonic()
+                    db.update_job(jid, progress=done / total)
+            fo.flush()
+            os.fsync(fo.fileno())
+
+    async def _refresh_later(self, kind: str, arr_id: int):
+        # Sonarr/Radarr need a moment for the rescan and the new mediaInfo.
+        await asyncio.sleep(20)
+        await arr.LIB.refresh_item("movie" if kind == "movie" else "series", arr_id)
+
+
+WORKER = Worker()
