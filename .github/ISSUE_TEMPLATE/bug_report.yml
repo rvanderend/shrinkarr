@@ -1,0 +1,44 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is Shrinkarr installed?
+      options:
+        - Proxmox LXC (install/proxmox.sh)
+        - Debian/Ubuntu (install/install.sh)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: encoder
+    attributes:
+      label: Encoder
+      description: Settings → Encoding shows which one is used.
+      options:
+        - Intel Quick Sync
+        - VAAPI (AMD/Intel)
+        - NVIDIA NVENC
+        - CPU (libx265)
+        - Don't know
+  - type: input
+    id: version
+    attributes:
+      label: Shrinkarr version
+      description: Settings → About
+      placeholder: "1.0.0"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "Output of `journalctl -u shrinkarr -n 100` in the container, or the ffmpeg log from the History page. Remove API keys and addresses you don't want to share."
+      render: text
