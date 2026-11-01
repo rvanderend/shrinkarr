@@ -26,6 +26,8 @@ TEXTS = {
         "smaller": "{pct:.0f}% smaller",
         "plus_cc": " (+ closed captions as SRT)",
         "rescan_failed": "Rescan in {app} failed: {err}",
+        "reverted": "Undone: the original is back",
+        "kept_gone": "The original is no longer there",
         "plex_failed": "Plex scan failed: {err}",
         # automatic
         "auto_off": "automatic conversion is off",
@@ -70,6 +72,8 @@ TEXTS = {
         "smaller": "{pct:.0f}% kleiner",
         "plus_cc": " (+ closed captions als SRT)",
         "rescan_failed": "Rescan in {app} mislukt: {err}",
+        "reverted": "Ongedaan gemaakt: het origineel staat terug",
+        "kept_gone": "Het origineel is er niet meer",
         "plex_failed": "Plex-scan mislukt: {err}",
         "auto_off": "automatisch omzetten staat uit",
         "auto_no_title": "titel niet gevonden",

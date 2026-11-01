@@ -8,12 +8,17 @@
 #                                   so Shrinkarr can replace them. Default 1000/1000.
 #   SHRINKARR_PORT                  web port (default 8080)
 #   SHRINKARR_WORK                  work folder for conversions (default /work; needs room for the biggest file)
-#   SHRINKARR_REPO / SHRINKARR_BRANCH   git source (default github.com/rvanderend/shrinkarr, main)
+#   SHRINKARR_VERSION               "latest" (default: the newest release), a release such as "v1.0.1",
+#                                   or a branch such as "main" (the newest, untested state)
+#   SHRINKARR_REPO                  git source (default github.com/rvanderend/shrinkarr)
 #   SHRINKARR_TARBALL               install from this local .tar.gz instead of git (for testing)
+#
+# Update later with: shrinkarr-update [version]
 set -euo pipefail
 
 REPO=${SHRINKARR_REPO:-https://github.com/rvanderend/shrinkarr.git}
-BRANCH=${SHRINKARR_BRANCH:-main}
+SK_VERSION=${SHRINKARR_VERSION:-${SHRINKARR_BRANCH:-latest}}
+GH_API=https://api.github.com/repos/rvanderend/shrinkarr
 UID_=${SHRINKARR_UID:-1000}
 GID_=${SHRINKARR_GID:-1000}
 PORT=${SHRINKARR_PORT:-8080}
@@ -83,11 +88,26 @@ if [[ -n ${SHRINKARR_TARBALL:-} ]]; then
   tar -xzf "$SHRINKARR_TARBALL" -C "$APP.new"
   [[ -d $APP/.venv ]] && mv "$APP/.venv" "$APP.new/.venv"
   rm -rf "$APP" && mv "$APP.new" "$APP"
-elif [[ -d $APP/.git ]]; then
-  git -C "$APP" fetch -q origin "$BRANCH" && git -C "$APP" reset -q --hard "origin/$BRANCH"
 else
-  rm -rf "$APP"
-  git clone -q --depth 1 -b "$BRANCH" "$REPO" "$APP"
+  if [[ $SK_VERSION == latest ]]; then
+    SK_VERSION=$(curl -fsSL "$GH_API/releases/latest" 2>/dev/null | grep -oP '"tag_name":\s*"\K[^"]+' || true)
+    [[ -n $SK_VERSION ]] || SK_VERSION=main
+  fi
+  if [[ ! -d $APP/.git ]]; then
+    rm -rf /tmp/shrinkarr-venv
+    [[ -d $APP/.venv ]] && mv "$APP/.venv" /tmp/shrinkarr-venv
+    rm -rf "$APP"
+    git clone -q "$REPO" "$APP"
+    [[ -d /tmp/shrinkarr-venv ]] && mv /tmp/shrinkarr-venv "$APP/.venv"
+  fi
+  git -C "$APP" fetch -q --tags --force origin
+  # A release is a tag; anything else is a branch on GitHub.
+  if git -C "$APP" rev-parse -q --verify "refs/tags/$SK_VERSION" >/dev/null; then REF="refs/tags/$SK_VERSION"
+  elif git -C "$APP" rev-parse -q --verify "refs/remotes/origin/$SK_VERSION" >/dev/null; then REF="origin/$SK_VERSION"
+  else die "Version $SK_VERSION not found (see https://github.com/rvanderend/shrinkarr/releases)."; fi
+  git -C "$APP" reset -q --hard "$REF"
+  git -C "$APP" clean -qfd -e .venv
+  ok "Version: $SK_VERSION"
 fi
 [[ -x $APP/.venv/bin/python ]] || python3 -m venv "$APP/.venv"
 "$APP/.venv/bin/pip" -q install --upgrade pip >/dev/null
@@ -96,7 +116,7 @@ chown -R root:root "$APP"
 install -d -o shrinkarr -g "$GROUP" -m 750 "$DATA"
 install -d -o shrinkarr -g "$GROUP" -m 770 "$WORK"
 chown shrinkarr:"$GROUP" "$WORK"
-ok "Installed in $APP ($(grep -oP 'VERSION = "\K[^"]+' "$APP/app/config.py"))"
+ok "Installed in $APP ($(grep -oP '^VERSION = "\K[^"]+' "$APP/app/config.py"))"
 
 install -d -m 750 -g "$GROUP" /etc/shrinkarr
 if [[ ! -f /etc/shrinkarr/config.env ]]; then
@@ -134,13 +154,17 @@ Nice=5
 WantedBy=multi-user.target
 EOF
 
+# Also in /usr/bin: `pct exec <ctid> -- shrinkarr-update` runs without /usr/local/bin in its PATH.
 cat > /usr/local/bin/shrinkarr-update <<'EOF'
 #!/usr/bin/env bash
-# Updates Shrinkarr to the latest version. A running conversion starts again after the restart.
+# Updates Shrinkarr. Usage: shrinkarr-update [version]   (default: the newest release; "main" = newest state)
+# A running conversion starts again after the restart.
 set -euo pipefail
-curl -fsSL https://raw.githubusercontent.com/rvanderend/shrinkarr/main/install/install.sh | bash
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+curl -fsSL https://raw.githubusercontent.com/rvanderend/shrinkarr/main/install/install.sh | SHRINKARR_VERSION="${1:-latest}" bash
 EOF
 chmod 755 /usr/local/bin/shrinkarr-update
+ln -sf /usr/local/bin/shrinkarr-update /usr/bin/shrinkarr-update
 
 systemctl daemon-reload
 systemctl enable -q shrinkarr

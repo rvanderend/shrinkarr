@@ -7,7 +7,7 @@ older installs that were configured through /etc/shrinkarr/config.env.
 import os
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 REPO = "rvanderend/shrinkarr"
 
 
@@ -48,6 +48,7 @@ DEFAULT_SETTINGS = {
     "gpu_device": "",              # /dev/dri/renderD128 (empty = first one found)
     "preset": "balanced",
     "min_savings": 15,             # percent; less gain = keep the original
+    "keep_days": 0,                # keep replaced originals this many days (0 = delete right away)
     "window_enabled": False,       # only start new jobs inside a time window
     "window_start": "01:00",
     "window_end": "08:00",

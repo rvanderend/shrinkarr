@@ -168,6 +168,26 @@ async def catch_up():
         db.set_state(f"history_{app}", (now - timedelta(minutes=2)).isoformat())
 
 
+# --- kept originals ------------------------------------------------------------------
+
+def clean_kept():
+    """Deletes kept originals whose time is up, and folders that become empty."""
+    from .worker import KEEP_DIR
+    for j in db.q("SELECT id, kept_path FROM jobs WHERE kept_path IS NOT NULL AND kept_until < ?", (time.time(),)):
+        p = Path(j["kept_path"])
+        try:
+            p.unlink(missing_ok=True)
+            d = p.parent
+            while d.name != KEEP_DIR and d != d.parent and not any(d.iterdir()):
+                d.rmdir()
+                d = d.parent
+            if d.name == KEEP_DIR and not any(d.iterdir()):
+                d.rmdir()
+        except OSError:
+            log.warning("Could not remove the kept original %s", p)
+        db.update_job(j["id"], kept_path=None)
+
+
 # --- notifications -----------------------------------------------------------------
 
 def _send_mail(s: dict, subject: str, body: str):
@@ -267,6 +287,8 @@ async def loop():
             await notify_tick()
             if n % 15 == 0:
                 await catch_up()
+            if n % 60 == 0:
+                await asyncio.to_thread(clean_kept)
         except Exception:  # noqa: BLE001
             log.exception("Error in the auto loop")
         n += 1

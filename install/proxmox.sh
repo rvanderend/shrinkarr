@@ -6,8 +6,9 @@
 #
 # Without a terminal (or with SHRINKARR_YES=1) it uses the defaults and these variables, no questions:
 #   CTID, CT_HOSTNAME, CT_STORAGE, CT_DISK (GB), CT_CORES, CT_RAM (MB), CT_BRIDGE, CT_IP (dhcp or 10.0.0.5/24),
-#   CT_GW, MEDIA_PATH (host folder with your media), MEDIA_MP (path inside the container, default /data/media),
-#   WORK_SIZE (GB for the work volume, default 100), GPU (render node, e.g. /dev/dri/renderD128, or "nvidia" or "none")
+#   CT_GW, MEDIA_PATHS (host folders with your media, separated by "|"; each is mounted at /data/<folder name>),
+#   or MEDIA_PATH + MEDIA_MP (one folder at a path of your choice), WORK_SIZE (GB for the work volume, default 100),
+#   GPU (render node, e.g. /dev/dri/renderD128, or "nvidia" or "none")
 #   SHRINKARR_TARBALL (local .tar.gz of the app instead of GitHub, for testing)
 set -euo pipefail
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
@@ -72,13 +73,41 @@ ask CT_BRIDGE "Network bridge" "vmbr0"
 ask CT_IP "IP address: dhcp, or static like 192.168.1.50/24" "dhcp"
 if [[ $CT_IP != dhcp ]]; then ask CT_GW "Gateway" "$(ip route | awk '/default/ {print $3; exit}')"; fi
 
-# --- media folder ---------------------------------------------------------------------------
-ask MEDIA_PATH "Folder on this Proxmox host with your movies and series (the same files Sonarr/Radarr use). Mount it here first if it's on a NAS (NFS/SMB)." "/mnt/media"
-[[ -d $MEDIA_PATH ]] || die "$MEDIA_PATH does not exist on this host."
-ask MEDIA_MP "Path of that folder inside the container" "/data/media"
+# --- media folders --------------------------------------------------------------------------
+# Only the folders you pick are mounted (writable). Each one is mounted at /data/<folder name>.
+M_HOST=(); M_CT=()
+if [[ -n ${MEDIA_PATH:-} ]]; then
+  M_HOST=("$MEDIA_PATH"); M_CT=("${MEDIA_MP:-/data/media}")
+else
+  if [[ -z ${MEDIA_PATHS:-} ]]; then
+    ask MEDIA_PARENT "Folder on this Proxmox host that holds your movies and series (the files Sonarr/Radarr use). Mount your NAS share here first. Next you pick the sub-folders." "/mnt/media"
+    [[ -d $MEDIA_PARENT ]] || die "$MEDIA_PARENT does not exist on this host."
+    MEDIA_PATHS=$MEDIA_PARENT
+    if [[ $INTERACTIVE == 1 ]]; then
+      items=(".all" "The whole folder $MEDIA_PARENT" "OFF")
+      while IFS= read -r -d '' d; do items+=("$(basename "$d")" "" "ON"); done \
+        < <(find "$MEDIA_PARENT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -print0 | sort -z)
+      if [[ ${#items[@]} -gt 3 ]]; then
+        sel=$(whiptail --title "Shrinkarr" --separate-output --checklist \
+          "Which folders hold movies or series? Only these are mounted, and Shrinkarr can write in them." \
+          20 76 12 "${items[@]}" 3>&1 1>&2 2>&3) || die "Cancelled."
+        if [[ -n $sel ]] && ! grep -qx '.all' <<< "$sel"; then
+          MEDIA_PATHS=""
+          while IFS= read -r name; do MEDIA_PATHS+="${MEDIA_PATHS:+|}$MEDIA_PARENT/$name"; done <<< "$sel"
+        fi
+      fi
+    fi
+  fi
+  IFS='|' read -r -a M_HOST <<< "$MEDIA_PATHS"
+  for h in "${M_HOST[@]}"; do M_CT+=("/data/$(basename "$h")"); done
+fi
+for h in "${M_HOST[@]}"; do [[ -d $h ]] || die "$h does not exist on this host."; done
 ask WORK_SIZE "Size of the work volume in GB (room for the biggest file you'll convert)" "100"
-MEDIA_UID=$(stat -c %u "$MEDIA_PATH"); MEDIA_GID=$(stat -c %g "$MEDIA_PATH")
+MEDIA_UID=$(stat -c %u "${M_HOST[0]}"); MEDIA_GID=$(stat -c %g "${M_HOST[0]}")
 info "Media folder is owned by uid $MEDIA_UID, gid $MEDIA_GID"
+for h in "${M_HOST[@]:1}"; do
+  [[ $(stat -c %u:%g "$h") == "$MEDIA_UID:$MEDIA_GID" ]] || warn "$h has another owner ($(stat -c %u:%g "$h")) than ${M_HOST[0]}; Shrinkarr may not be able to write there."
+done
 
 # --- GPU ----------------------------------------------------------------------------------------
 gpu_items=()
@@ -115,15 +144,28 @@ ok "Template $TPL"
 # --- create -----------------------------------------------------------------------------------
 NET="name=eth0,bridge=$CT_BRIDGE,ip=$CT_IP,type=veth"
 [[ $CT_IP != dhcp ]] && NET="$NET,gw=$CT_GW"
+# Mount points. A path with a space or comma can't be an mpN; that one becomes an lxc.mount.entry.
+MP_ARGS=(); MOUNT_ENTRIES=(); m=0
+esc() { local x=${1// /\\040}; echo "${x//,/\\054}"; }
+for i in "${!M_HOST[@]}"; do
+  h=${M_HOST[$i]}; c=${M_CT[$i]}
+  if [[ $h == *[\ ,]* || $c == *[\ ,]* ]]; then
+    MOUNT_ENTRIES+=("lxc.mount.entry: $(esc "$h") $(esc "${c#/}") none bind,create=dir 0 0")
+  else
+    MP_ARGS+=(--mp$m "$h,mp=$c,backup=0"); m=$((m+1))
+  fi
+done
+MP_ARGS+=(--mp$m "$CT_STORAGE:$WORK_SIZE,mp=/work,backup=0")
+
 info "Creating container $CTID"
 pct create "$CTID" "$TPL_STORE:vztmpl/$TPL" \
   --hostname "$CT_HOSTNAME" --ostype debian --unprivileged 1 --features nesting=1,keyctl=1 \
   --cores "$CT_CORES" --memory "$CT_RAM" --swap 512 --rootfs "$CT_STORAGE:$CT_DISK" \
-  --net0 "$NET" --onboot 1 \
-  --mp0 "$MEDIA_PATH,mp=$MEDIA_MP,backup=0" \
-  --mp1 "$CT_STORAGE:$WORK_SIZE,mp=/work,backup=0" \
+  --net0 "$NET" --onboot 1 "${MP_ARGS[@]}" \
   --description "Shrinkarr: shrink media from Sonarr/Radarr to HEVC. https://github.com/rvanderend/shrinkarr" >/dev/null
 CONF=/etc/pve/lxc/$CTID.conf
+# Everything below is appended right after creating, so it lands in the main section (no snapshots yet).
+for e in "${MOUNT_ENTRIES[@]}"; do echo "$e" >> "$CONF"; done
 
 # GPU passthrough. Device nodes get gid 44 (video) in the container; the service user is in that group.
 n=0
@@ -146,11 +188,20 @@ idmap() {  # idmap <u|g> <id>
   if [[ $id -lt 65535 ]]; then echo "lxc.idmap: $k $((id+1)) $((100000+id+1)) $((65535-id))"; fi
   return 0
 }
-SVC_UID=$MEDIA_UID; SVC_GID=$MEDIA_GID
-if [[ $MEDIA_UID -eq 0 ]]; then
-  warn "The media folder is owned by root. Shrinkarr runs as uid 1000 and needs group write access on your media."
-  SVC_UID=1000
-fi
+# The id the owner has inside the container: 1-65535 are mapped 1:1 below; a host id in the default
+# range of unprivileged containers (100000-165535, e.g. a bindfs overlay) is that id minus 100000.
+ct_id() {  # ct_id <host id> <fallback> <what>
+  local id=$1 fallback=$2 what=$3
+  if [[ $id -ge 1 && $id -le 65535 ]]; then echo "$id"
+  elif [[ $id -gt 100000 && $id -le 165535 ]]; then echo $((id - 100000))
+  else
+    warn "The media folder's $what ($id) can't be used inside the container; Shrinkarr uses $fallback and needs write access through the other permissions." >&2
+    echo "$fallback"
+  fi
+}
+SVC_UID=$(ct_id "$MEDIA_UID" 1000 owner)
+SVC_GID=$(ct_id "$MEDIA_GID" 1000 group)
+[[ $MEDIA_UID != "$SVC_UID" || $MEDIA_GID != "$SVC_GID" ]] && info "Shrinkarr runs as uid $SVC_UID, gid $SVC_GID in the container"
 { idmap u "$MEDIA_UID"; idmap g "$MEDIA_GID"; } >> "$CONF"
 if [[ $MEDIA_UID -gt 0 && $MEDIA_UID -lt 65536 ]] && ! grep -q "^root:$MEDIA_UID:1$" /etc/subuid; then echo "root:$MEDIA_UID:1" >> /etc/subuid; fi
 if [[ $MEDIA_GID -gt 0 && $MEDIA_GID -lt 65536 ]] && ! grep -q "^root:$MEDIA_GID:1$" /etc/subgid; then echo "root:$MEDIA_GID:1" >> /etc/subgid; fi
@@ -188,6 +239,8 @@ fi
 IP=$(pct exec "$CTID" -- hostname -I | awk '{print $1}')
 echo
 ok "${c_b}Shrinkarr is ready:${c_off} ${c_ok}http://$IP:8080${c_off}"
-echo "  Open it and follow the setup wizard. In the container the media folder is ${c_b}$MEDIA_MP${c_off};"
-echo "  the wizard helps you map it to the paths Sonarr/Radarr use."
+echo "  Open it and follow the setup wizard. Your media is in the container at:"
+for i in "${!M_HOST[@]}"; do echo "    ${c_b}${M_CT[$i]}${c_off}  ←  ${M_HOST[$i]}"; done
+echo "  The wizard helps you map these to the paths Sonarr/Radarr use."
 echo "  Update later with: pct exec $CTID -- shrinkarr-update"
+

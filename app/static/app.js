@@ -532,7 +532,7 @@ function autoWhen(j) {
   return ' · ' + t('queue.inWindow') + nb;
 }
 export function statusBadge(s) {
-  const cls = { done: 'good', failed: 'bad', skipped: 'warn', cancelled: '', queued: 'accent', running: 'accent' }[s] ?? '';
+  const cls = { done: 'good', failed: 'bad', skipped: 'warn', cancelled: '', reverted: '', queued: 'accent', running: 'accent' }[s] ?? '';
   return `<span class="badge ${cls}">${t('status.' + s)}</span>`;
 }
 
@@ -624,7 +624,7 @@ async function renderHistory() {
 }
 function drawHistory() {
   const root = $('#h-root'); if (!root || !S.jobs) return;
-  const J = S.jobs, sig = JSON.stringify([J.recent.map((j) => [j.id, j.status]), lang()]);
+  const J = S.jobs, sig = JSON.stringify([J.recent.map((j) => [j.id, j.status, j.kept_path]), lang()]);
   if (root.dataset.sig === sig) return;
   root.dataset.sig = sig;
   const tt = J.totals;
@@ -641,7 +641,9 @@ function drawHistory() {
       <div class="hrow">
         <div style="min-width:0"><div class="t">${esc(j.title)} ${statusBadge(j.status)} ${autoBadge(j)}</div>
           <div class="s">${esc(j.subtitle)} · ${when(j.finished)} · ${presetLabel(j.preset)}</div>
-          ${j.message ? `<div class="s" style="color:${j.status === 'done' ? 'var(--good)' : j.status === 'failed' ? 'var(--bad)' : 'var(--muted)'}">${esc(j.message)}</div>` : ''}</div>
+          ${j.message ? `<div class="s" style="color:${j.status === 'done' ? 'var(--good)' : j.status === 'failed' ? 'var(--bad)' : 'var(--muted)'}">${esc(j.message)}</div>` : ''}
+          ${j.status === 'done' && j.kept_path && j.kept_until * 1000 > Date.now() ? `<div class="s">${t('hist.keptUntil', { date: when(j.kept_until) })}
+            <button class="btn sm" data-undo="${j.id}" style="margin-left:6px">${I.retry} ${t('hist.undo')}</button></div>` : ''}</div>
         <div class="r">${j.status === 'done' ? `<span class="num">${bytes(j.size_before)} → <b>${bytes(j.size_after)}</b></span><br><span class="good num">−${bytes(j.size_before - j.size_after)}</span>` : ''}
           <div class="btns" style="margin-top:4px">
             ${j.status !== 'done' ? `<button class="btn sm ghost" data-retry="${j.id}" title="${t('hist.retry')}" aria-label="${t('hist.retry')}">${I.retry}</button>` : ''}
@@ -654,6 +656,11 @@ function drawHistory() {
       if (b.id === 'clear-btn') await post('/api/jobs/clear');
       else if (b.dataset.retry) { await post(`/api/jobs/${b.dataset.retry}/retry`); toast(t('hist.requeued'), 'good'); }
       else if (b.dataset.del) await api('/api/jobs/' + b.dataset.del, { method: 'DELETE' });
+      else if (b.dataset.undo) {
+        if (!confirm(t('hist.undoConfirm'))) return;
+        await post(`/api/jobs/${b.dataset.undo}/undo`); toast(t('hist.undone'), 'good');
+        setTimeout(() => loadLibrary(), 25000);
+      }
       await pollJobs();
     } catch (err) { toast(err.message, 'bad'); }
   };

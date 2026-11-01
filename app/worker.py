@@ -3,6 +3,7 @@
 `stage` is stored as a code (analyze, encode, verify, ...); the web UI translates it.
 """
 import asyncio
+import errno
 import logging
 import os
 import shutil
@@ -41,6 +42,38 @@ def eligible(job: dict, s: dict) -> bool:
 
 
 PLEX_WAIT_MAX = 12 * 3600  # waiting longer than this for a viewer: skip after all
+KEEP_DIR = ".shrinkarr-originals"
+
+
+def keep_location(kind: str, src: str) -> Path:
+    """Where to keep a replaced original: <root folder>/.shrinkarr-originals/<path below the root>.
+
+    Sonarr, Radarr and Plex skip folders whose name starts with a dot.
+    """
+    app = "radarr" if kind == "movie" else "sonarr"
+    for r in sorted(arr.LIB.roots.get(app, []), key=lambda r: -len(r["path"])):
+        base = arr.to_local(r["path"]).rstrip("/")
+        if src.startswith(base + "/"):
+            return Path(base) / KEEP_DIR / src[len(base) + 1:]
+    return Path(src).parent / KEEP_DIR / Path(src).name
+
+
+def _keep(kind: str, src: str) -> Path:
+    """Moves the original out of the way (a rename on the same file system: no copying)."""
+    dest = keep_location(kind, src)
+    if dest.exists():
+        dest = dest.with_name(f"{dest.stem}.{int(time.time())}{dest.suffix}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(src, dest)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        # The root folder is on another mount than this file: keep it next to the file.
+        dest = Path(src).parent / KEEP_DIR / Path(src).name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.rename(src, dest)
+    return dest
 
 
 class Worker:
@@ -244,19 +277,25 @@ class Worker:
         if shutil.disk_usage(folder).free < new_size + 1e9:
             raise RuntimeError(tr("no_space_nas"))
         tmp = folder / f".{final.stem}.shrinkarr-tmp"
+        keep_days = int(db.get_settings()["keep_days"] or 0)
+        kept = None
         db.update_job(jid, stage="replace", progress=0)
         try:
             await asyncio.to_thread(self._copy, out, tmp, jid, new_size)
             if tmp.stat().st_size != new_size:
                 raise RuntimeError(tr("copy_incomplete"))
             os.chmod(tmp, st.st_mode & 0o777)
+            if keep_days > 0:
+                kept = _keep(job["kind"], src)
             os.replace(tmp, final)
         except BaseException:
             tmp.unlink(missing_ok=True)
+            if kept and kept.exists() and not os.path.exists(src):
+                os.rename(kept, src)  # put the original back
             raise
-        if final != Path(src):
+        if final != Path(src) and not kept:
             os.unlink(src)
-        log.info("Replaced: %s (%d -> %d bytes)", final, st.st_size, new_size)
+        log.info("Replaced: %s (%d -> %d bytes)%s", final, st.st_size, new_size, f"; original kept in {kept}" if kept else "")
 
         # 7. Update Sonarr/Radarr and Plex
         db.update_job(jid, stage="update", path=str(final), size_after=new_size)
@@ -272,7 +311,8 @@ class Worker:
         asyncio.create_task(self._refresh_later(job["kind"], job["arr_id"]))
         msg = tr("smaller", pct=saved_pct) + (tr("plus_cc") if cc_path else "") + \
             ("; " + "; ".join(notes) if notes else "")
-        return {"size_after": new_size, "message": msg, "path": str(final)}
+        extra = {"kept_path": str(kept), "kept_until": time.time() + keep_days * 86400, "orig_path": src} if kept else {}
+        return {"size_after": new_size, "message": msg, "path": str(final), **extra}
 
     async def _wait_for_viewers(self, jid: int, src: str):
         start = time.monotonic()

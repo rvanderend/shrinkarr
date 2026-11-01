@@ -324,7 +324,7 @@ async def enqueue(req: EnqueueReq):
 
 JOB_COLS = ("id, kind, arr_id, file_id, title, subtitle, path, preset, status, stage, progress, fps, speed, eta, "
             "cur_size, size_before, size_after, est_size, est_seconds, message, position, created, started, finished, "
-            "source, not_before")
+            "source, not_before, kept_path, kept_until")
 
 
 @app.get("/api/jobs")
@@ -375,6 +375,42 @@ async def job_retry(job_id: int):
     db.update_job(job_id, status="queued", stage="", progress=0, message="", log="", position=pos,
                   finished=None, started=None, size_after=None, source="manual", not_before=None)
     WORKER.wake.set()
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/undo")
+async def job_undo(job_id: int):
+    """Puts the kept original back and removes the converted file."""
+    from .i18n import tr
+    j = db.one("SELECT * FROM jobs WHERE id=?", (job_id,))
+    if not j or j["status"] != "done" or not j["kept_path"] or not j["orig_path"]:
+        raise HTTPException(400, "cannot undo")
+    kept, orig, new = Path(j["kept_path"]), Path(j["orig_path"]), Path(j["path"])
+    if not kept.exists():
+        db.update_job(job_id, kept_path=None)
+        raise HTTPException(410, tr("kept_gone"))
+    if orig == new:
+        os.replace(kept, orig)
+    else:
+        os.rename(kept, orig)
+        new.unlink(missing_ok=True)
+    d = kept.parent  # remove the folders that are now empty, up to .shrinkarr-originals
+    while d.name and d != d.parent and not any(d.iterdir()):
+        d.rmdir()
+        if d.name == ".shrinkarr-originals":
+            break
+        d = d.parent
+    db.update_job(job_id, status="reverted", stage="reverted", message=tr("reverted"), kept_path=None, path=str(orig))
+    try:
+        await arr.rescan(j["kind"], j["arr_id"])
+        await arr.plex_refresh(str(orig))
+    except Exception:  # noqa: BLE001
+        log.warning("Rescan after undo failed for job %s", job_id)
+
+    async def later():
+        await asyncio.sleep(20)
+        await arr.LIB.refresh_item("movie" if j["kind"] == "movie" else "series", j["arr_id"])
+    asyncio.create_task(later())
     return {"ok": True}
 
 

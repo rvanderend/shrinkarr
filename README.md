@@ -21,6 +21,7 @@
 - **Re-encodes on the GPU** to HEVC: Intel Quick Sync, AMD/Intel VAAPI, NVIDIA NVENC, or the CPU (libx265) when there is no GPU. Usually 50–70% smaller at hardly any visible difference.
 - **Keeps everything else as it is.** All audio tracks, subtitles (MP4 text subtitles become SRT, closed captions in the video stream are saved as an SRT track), chapters and attachments are copied 1:1.
 - **Replaces safely.** The new file is checked (codec, number of audio and subtitle tracks, duration, minimum gain) before it replaces the original. Sonarr, Radarr and Plex rescan afterwards.
+- **Can keep originals** for a few days (optional), so you can undo a conversion with one click.
 - **Never replaces a file someone is watching** in Plex: it waits until playback stops.
 - **Converts new downloads automatically** (optional) through a webhook from Sonarr/Radarr, inside a time window, for example at night.
 - **Sends a daily summary** by e-mail or Pushover.
@@ -62,7 +63,7 @@ Run this on the Proxmox host (as root). It creates an LXC container, finds the G
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/rvanderend/shrinkarr/main/install/proxmox.sh)"
 ```
 
-It asks for a few things (with sensible defaults): container ID, storage, network, the **folder with your media on the host** (mount your NAS share on the host first), and which GPU to use. The media folder's owner (uid/gid) is mapped 1:1 into the unprivileged container, so Shrinkarr can replace files without making the container privileged. Unattended use: see the variables at the top of [install/proxmox.sh](install/proxmox.sh).
+It asks for a few things (with sensible defaults): container ID, storage, network, the **folder with your media on the host** (mount your NAS share on the host first) and which of its sub-folders hold movies and series, and which GPU to use. Each media folder is mounted at `/data/<folder name>`; folders you don't pick (photos, for example) stay out of the container. The owner of the media (uid/gid) is mapped into the unprivileged container, so Shrinkarr can replace files without making the container privileged; a host id in the range of unprivileged containers (100000–165535, as with a bindfs overlay) works too. Unattended use: see the variables at the top of [install/proxmox.sh](install/proxmox.sh), e.g. `MEDIA_PATHS="/mnt/nas/movies|/mnt/nas/tv"`.
 
 ### Debian or Ubuntu (container, VM or bare metal)
 
@@ -86,6 +87,7 @@ Open `http://<container-ip>:8080` afterwards. The **setup wizard** takes you thr
 2. A job encodes the video to HEVC in the work folder. Hardware decoding is used for H.264 and MPEG-2; other sources (MPEG-4/XviD, VC-1, 10-bit H.264, interlaced) are decoded in software, with deinterlacing where needed.
 3. The output is checked. The original **stays** when ffmpeg fails, the video isn't HEVC, an audio or subtitle track is missing, the duration differs by more than 2 s (or 0.5%), the gain is smaller than the minimum (15% by default), or the original changed in the meantime.
 4. The new file is copied next to the original as a hidden temporary file and then renamed over it. An `.mp4`/`.avi` becomes `.mkv` (the original is deleted then). The file gets the tag `SHRINKARR=<encoder> q<quality>`.
+   With **Keep originals** on, the original is first moved to `<root folder>/.shrinkarr-originals/…` (a rename on the same disk, no copying; Sonarr, Radarr and Plex skip folders starting with a dot). The History page then has an **Undo** button until it is deleted after the chosen number of days.
 5. Sonarr/Radarr rescan the item, Plex rescans only that folder.
 
 Files that are already HEVC, AV1 or VP9 are left alone.
@@ -109,11 +111,13 @@ The webhook address must be reachable from Sonarr/Radarr without a login. By def
 ## Updating
 
 ```bash
-shrinkarr-update                      # inside the container
-pct exec <ctid> -- shrinkarr-update   # from the Proxmox host
+shrinkarr-update                      # the newest release, inside the container
+pct exec <ctid> -- shrinkarr-update   # the same, from the Proxmox host
+shrinkarr-update v1.0.0               # a given release (see Releases)
+shrinkarr-update main                 # the newest, untested state
 ```
 
-A running conversion starts again after the restart; pause the queue first if you like.
+A running conversion starts again after the restart; pause the queue first if you like. What changed is in [CHANGELOG.md](CHANGELOG.md); Settings → About shows when a newer release is out.
 
 ## Troubleshooting
 
