@@ -4,6 +4,7 @@
 
 - A file in a folder Shrinkarr can't write to (a read-only mount, or no permission) is skipped before encoding, instead of failing at the replace step after the whole encode. Such files are not queued, and the Library page warns about read-only root folders. (#6)
 - When replacing fails, cleaning up no longer adds a second error to the log, and putting a kept original back can't be cut short. (#6)
+- **Start now:** the queue page's "Waiting for the time window" banner has a *Start now* button that ignores the window this once, until the queue is empty. Automatic jobs keep their own window.
 
 ## 1.0.1
 
