@@ -156,7 +156,7 @@ function filtered() {
     && (f.root === 'all' || i.root === f.root)
     && (!q || i.title.toLowerCase().includes(q))
     && (f.show === 'all' || (f.show === 'todo' && i.convertible > 0) || (f.show === 'efficient' && i.convertible === 0)
-      || (f.show === 'queued' && i.queued > 0)));
+      || (f.show === 'queued' && i.queued > 0) || (f.show === 'dts' && i.dts > 0)));
   const sv = (i) => i.size - i.estSize;
   const sorters = {
     savings: (a, b) => sv(b) - sv(a),
@@ -183,7 +183,7 @@ function renderChips() {
         <select data-k="${k}" aria-label="${esc(title)}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
       ${active ? `<button class="chip-x" data-k="${k}" aria-label="${esc(t('chip.remove', { name: title }))}">${I.x}</button>` : ''}</span>`;
   };
-  const show = ['todo', 'efficient', 'queued', 'all'].map((k) => [k, t('show.' + k)]);
+  const show = ['todo', 'efficient', 'queued', 'dts', 'all'].map((k) => [k, t('show.' + k)]);
   const sort = ['savings', 'size', 'pct', 'quick', 'name'].map((k) => [k, t('sort.' + k)]);
   $('#chips').innerHTML = [
     chip('show', t('chip.show'), show, f.show, f.show !== 'all'),

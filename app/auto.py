@@ -94,7 +94,7 @@ async def consider(app: str, arr_id: int, *, file_id: int | None = None, path: s
         reason = tr("auto_kind_off")
     elif item["root"] and item["root"] in s["auto_exclude_roots"]:
         reason = tr("auto_root_off")
-    elif f["efficient"]:
+    elif not media.needs_work(f, s):
         reason = tr("auto_efficient", codec=f["codecLabel"])
     elif Path(f["path"]).suffix.lower() != ".mkv":
         reason = tr("auto_not_mkv")

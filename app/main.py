@@ -190,6 +190,7 @@ def _summary(item: dict, preset: str, model: media.Model, active, saved) -> dict
         "queued": sum(1 for f in files if f["job"]),
         "running": any(f["job"] and f["job"]["status"] == "running" for f in files),
         "saved": saved.get((item["kind"], item["id"]), 0),
+        "dts": sum(1 for f in files if f.get("dts")),
         "sampled": bool(sample),
         "_files": files,
     }
@@ -310,7 +311,7 @@ async def enqueue(req: EnqueueReq):
         for f in it["files"]:
             if ref.fileIds is not None and f["fileId"] not in ref.fileIds:
                 continue
-            if f["efficient"] or db.active_job_for(f["kind"], f["fileId"]):
+            if not media.needs_work(f) or db.active_job_for(f["kind"], f["fileId"]):
                 continue
             if not writable(Path(f["path"]).parent):
                 read_only += 1

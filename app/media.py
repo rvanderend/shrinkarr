@@ -73,6 +73,7 @@ def file_facts(mi: dict, size: int) -> dict:
     fps = float(mi.get("videoFps") or 0) or 24.0
     codec = norm_codec(mi.get("videoCodec", ""))
     abr = float(mi.get("audioBitrate") or 0)
+    acodec = mi.get("audioCodec") or ""
     vbr = float(mi.get("videoBitrate") or 0)
     if dur > 0:
         total_br = size * 8 / dur
@@ -91,11 +92,51 @@ def file_facts(mi: dict, size: int) -> dict:
         "bitDepth": int(mi.get("videoBitDepth") or 8),
         "hdr": hdr,
         "audio": mi.get("audioLanguages") or "",
-        "audioCodec": mi.get("audioCodec") or "",
+        "audioCodec": acodec,
         "audioChannels": mi.get("audioChannels") or 0,
+        "audioBitrate": abr,
+        "dts": acodec.upper().startswith("DTS"),
         "subs": mi.get("subtitles") or "",
         "efficient": codec in EFFICIENT,
     }
+
+
+# --- DTS -> E-AC3 ------------------------------------------------------------------
+
+# Channel layouts ffmpeg's eac3 encoder takes as they are; anything else is downmixed.
+EAC3_LAYOUTS = {"mono", "stereo", "2.1", "3.0", "3.0(back)", "3.1", "4.0", "4.1", "quad", "quad(side)",
+                "5.0", "5.0(side)", "5.1", "5.1(side)"}
+
+
+def audio_work(f: dict, s: dict | None = None) -> bool:
+    """Whether the audio of a file (as Sonarr/Radarr report it) should be converted."""
+    s = s or db.get_settings()
+    return bool(s.get("dts_to_eac3") and f.get("dts"))
+
+
+def needs_work(f: dict, s: dict | None = None) -> bool:
+    """Whether a file has anything to do: video to re-encode, or audio to convert."""
+    return not f["efficient"] or audio_work(f, s)
+
+
+def eac3_rate(channels: int) -> int:
+    ch = min(int(channels or 2), 6)
+    return config.EAC3_BITRATE[1] if ch <= 1 else config.EAC3_BITRATE[2] if ch == 2 else config.EAC3_BITRATE[6]
+
+
+def audio_saving(f: dict) -> float:
+    """Rough number of bytes saved by converting the (main) DTS track. Sonarr/Radarr only report that one."""
+    label = (f.get("audioCodec") or "").upper()
+    src = float(f.get("audioBitrate") or 0)
+    if "MA" in label or "X" in label.replace("DTS", ""):
+        src = max(src, 3_500_000)  # lossless: Sonarr/Radarr often report only the core, or nothing
+    elif src <= 0:
+        src = 1_509_000
+    try:
+        ch = 6 if float(f.get("audioChannels") or 0) > 2 else 2
+    except ValueError:
+        ch = 6
+    return max(src - eac3_rate(ch), 0) * f["duration"] / 8
 
 
 # --- estimate model ------------------------------------------------------------
@@ -132,8 +173,15 @@ class Model:
 
 def estimate(f: dict, size: int, preset: str, model: Model, sample: dict | None = None) -> dict:
     """Estimated size and conversion time of one file."""
-    if f["efficient"] or f["duration"] <= 0:
+    audio = audio_work(f)
+    if f["duration"] <= 0 or not needs_work(f):
         return {"size": size, "seconds": 0, "convertible": False}
+    abytes = audio_saving(f) if audio else 0
+    if f["efficient"]:
+        # Only the audio: the video is copied. Mostly reading and writing the file.
+        new_size = int(max(size - abytes, size * 0.5))
+        return {"size": new_size, "seconds": (size + new_size) / COPY_SPEED + f["duration"] / 100,
+                "convertible": True, "ratio": 1.0, "sampled": False, "audioOnly": True}
     p = config.PRESETS[preset]
     vbytes = min(f["vbr"] * f["duration"] / 8, size * 0.97)
     if sample:
@@ -146,7 +194,7 @@ def estimate(f: dict, size: int, preset: str, model: Model, sample: dict | None 
         if src_bpp > 0:
             out_bpp = max(src_bpp * ratio, min(src_bpp * 0.85, p["floor_bpp"]))
             ratio = out_bpp / src_bpp
-    new_size = int(size - vbytes + vbytes * ratio)
+    new_size = int(max(size - vbytes + vbytes * ratio - abytes, size * 0.05))
     seconds = f["duration"] * f["fps"] / max(fps, 1) + new_size / COPY_SPEED
     return {"size": new_size, "seconds": seconds, "convertible": True, "ratio": ratio, "sampled": bool(sample)}
 
@@ -222,8 +270,11 @@ def video_info(p: dict) -> dict:
 
 # --- ffmpeg commands ------------------------------------------------------------
 
-def plan_streams(p: dict) -> dict:
-    """Which streams to keep. Subtitles MKV doesn't support block the conversion."""
+def plan_streams(p: dict, dts: bool = False) -> dict:
+    """Which streams to keep. Subtitles MKV doesn't support block the conversion.
+
+    With `dts`, the positions (among the audio streams) of DTS tracks to convert to E-AC3 are in "convert".
+    """
     subs, unsupported = [], []
     for s in streams(p, "subtitle"):
         c = s.get("codec_name", "")
@@ -231,8 +282,10 @@ def plan_streams(p: dict) -> dict:
             subs.append(s)
         else:
             unsupported.append(c or "unknown")
+    audio = streams(p, "audio")
     return {
-        "audio": streams(p, "audio"),
+        "audio": audio,
+        "convert": [i for i, s in enumerate(audio) if dts and s.get("codec_name") == "dts"],
         "subs": subs,
         "attachments": [s for s in p.get("streams", []) if s.get("codec_type") == "attachment"],
         "unsupported_subs": unsupported,
@@ -243,13 +296,40 @@ STAT_TAGS = ["BPS", "NUMBER_OF_BYTES", "NUMBER_OF_FRAMES", "DURATION", "_STATIST
              "_STATISTICS_WRITING_APP", "_STATISTICS_WRITING_DATE_UTC"]
 
 
+DTS_RE = re.compile(r"\bDTS(?:[-: ]?(?:HD|MA|HRA|ES|X)\b)*(?:\s*\+\s*DTS[-: ]?X\b)?", re.I)
+
+
+def eac3_args(i: int, s: dict) -> list[str]:
+    """ffmpeg options to turn output audio stream i (a DTS track `s` of the source) into E-AC3."""
+    ch = int(s.get("channels") or 2)
+    out_ch = ch if s.get("channel_layout") in EAC3_LAYOUTS and ch <= 6 else (6 if ch > 2 else 2)
+    args = [f"-c:a:{i}", "eac3", f"-b:a:{i}", str(eac3_rate(out_ch))]
+    if out_ch != ch or s.get("channel_layout") not in EAC3_LAYOUTS:
+        args += [f"-ac:a:{i}", str(out_ch)]
+    title = tag(s, "TITLE")
+    if title and DTS_RE.search(title):
+        # "7.1 DTS-X English" -> "5.1 E-AC3 English": keep the rest (language, commentary, ...)
+        title = DTS_RE.sub("E-AC3", title)
+        if out_ch != ch:
+            title = re.sub(r"\b[67]\.[01]\b", "5.1" if out_ch == 6 else f"{out_ch}.0", title)
+        args += [f"-metadata:s:a:{i}", f"title={title}"]
+    for t_ in STAT_TAGS:
+        for suffix in ("", "-eng"):
+            args += [f"-metadata:s:a:{i}", f"{t_}{suffix}="]
+    return args
+
+
 def build_cmd(p: dict, src: str, dst: str, enc: dict, quality: int, hw: bool, *, ss: float | None = None,
-              t: float | None = None, video_only: bool = False, cc_srt: str | None = None) -> list[str]:
+              t: float | None = None, video_only: bool = False, cc_srt: str | None = None,
+              dts: bool = False, audio_only: bool = False) -> list[str]:
+    """ffmpeg command for a conversion. `dts` also converts DTS tracks to E-AC3; `audio_only` copies the
+    video and only converts those."""
     vi = video_info(p)
-    plan = plan_streams(p)
-    cmd = [config.FFMPEG, "-hide_banner", "-nostdin", "-y", "-nostats", "-progress", "pipe:1",
-           *encoders.init_args(enc)]
-    if hw:
+    plan = plan_streams(p, dts)
+    cmd = [config.FFMPEG, "-hide_banner", "-nostdin", "-y", "-nostats", "-progress", "pipe:1"]
+    if not audio_only:
+        cmd += encoders.init_args(enc)
+    if hw and not audio_only:
         cmd += encoders.decode_args(enc, vi)
     if ss is not None:
         cmd += ["-ss", f"{ss:.2f}"]
@@ -270,13 +350,15 @@ def build_cmd(p: dict, src: str, dst: str, enc: dict, quality: int, hw: bool, *,
         for s in plan["attachments"]:
             cmd += ["-map", f"0:{s['index']}"]
         cmd += ["-map_metadata", "0", "-map_chapters", "0"]
-    cmd += ["-c", "copy", *encoders.encode_args(enc, vi, hw, quality)]
+    cmd += ["-c", "copy"]
     v = vi["stream"]
-    for opt, key in (("-color_primaries", "color_primaries"), ("-color_trc", "color_transfer"),
-                     ("-colorspace", "color_space")):
-        val = v.get(key)
-        if val and val not in ("unknown", "reserved"):
-            cmd += [opt, val]
+    if not audio_only:
+        cmd += encoders.encode_args(enc, vi, hw, quality)
+        for opt, key in (("-color_primaries", "color_primaries"), ("-color_trc", "color_transfer"),
+                         ("-colorspace", "color_space")):
+            val = v.get(key)
+            if val and val not in ("unknown", "reserved"):
+                cmd += [opt, val]
     if not video_only:
         for i, s in enumerate(plan["subs"]):
             if s.get("codec_name") in CONVERT_SUBS:
@@ -286,11 +368,15 @@ def build_cmd(p: dict, src: str, dst: str, enc: dict, quality: int, hw: bool, *,
             lang = tag(v, "LANGUAGE") or "eng"
             cmd += [f"-c:s:{i}", "srt", f"-metadata:s:s:{i}", f"language={lang}",
                     f"-metadata:s:s:{i}", "title=Closed captions"]
-        # The statistics tags of the old video stream are wrong now: drop them.
-        for t_ in STAT_TAGS:
-            for suffix in ("", "-eng"):
-                cmd += ["-metadata:s:v:0", f"{t_}{suffix}="]
-        cmd += ["-metadata", f"SHRINKARR={encoders.codec_name(enc)} q{quality}"]
+        for i in plan["convert"]:
+            cmd += eac3_args(i, plan["audio"][i])
+        if not audio_only:
+            # The statistics tags of the old video stream are wrong now: drop them.
+            for t_ in STAT_TAGS:
+                for suffix in ("", "-eng"):
+                    cmd += ["-metadata:s:v:0", f"{t_}{suffix}="]
+        mark = "video copy" if audio_only else f"{encoders.codec_name(enc)} q{quality}"
+        cmd += ["-metadata", f"SHRINKARR={mark}" + (" + eac3" if plan["convert"] else "")]
     cmd += ["-max_muxing_queue_size", "9999", "-f", "matroska", dst]
     return cmd
 
