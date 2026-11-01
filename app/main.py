@@ -162,7 +162,8 @@ def _saved_by_item() -> dict[tuple, int]:
 def _file_view(f: dict, preset: str, model: media.Model, sample, active) -> dict:
     e = media.estimate(f, f["size"], preset, model, sample)
     job = active.get((f["kind"], f["fileId"]))
-    return {**f, "estSize": e["size"], "estSeconds": e["seconds"], "convertible": e["convertible"], "job": job}
+    return {**f, "estSize": e["size"], "estSeconds": e["seconds"], "convertible": e["convertible"], "job": job,
+            "toEac3": e["convertible"] and media.audio_work(f)}
 
 
 def _summary(item: dict, preset: str, model: media.Model, active, saved) -> dict:
