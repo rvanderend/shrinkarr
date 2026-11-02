@@ -18,6 +18,7 @@ export const S = {
   jobs: null,
   detail: null,
   doneCount: null,
+  lastDone: null,
   setupDone: true,
   auth: { enabled: false, loggedIn: true },
 };
@@ -680,10 +681,18 @@ function drawHistory() {
 // ==========================================================================
 // Polling the queue
 // ==========================================================================
+let pollSeq = 0, pollApplied = 0;
 export async function pollJobs() {
   if (!S.setupDone || !S.auth.loggedIn) return;
-  try { S.jobs = await api('/api/jobs'); } catch { return; }
-  const J = S.jobs, run = J.queue.find((j) => j.status === 'running');
+  // Polls can overlap (timer plus a tab switch, or a frozen tab that wakes up);
+  // an older answer that arrives late must not overwrite a newer one.
+  const seq = ++pollSeq;
+  let J;
+  try { J = await api('/api/jobs'); } catch { return; }
+  if (seq < pollApplied) return;
+  pollApplied = seq;
+  S.jobs = J;
+  const run = J.queue.find((j) => j.status === 'running');
   const qc = $('#queue-count'); qc.hidden = !J.queue.length; qc.textContent = J.queue.length;
   const mp = $('#mini-progress');
   if (run && S.route !== 'queue') {
@@ -692,13 +701,17 @@ export async function pollJobs() {
       <span class="bar"><i style="width:${(run.progress || 0) * 100}%"></i></span><span class="num">${Math.round((run.progress || 0) * 100)}%</span>`;
     mp.onclick = () => { location.hash = '#/queue'; };
   } else mp.hidden = true;
+  // Toast once per newly finished job, by its finish time: a count can change for
+  // other reasons (undo) and the same change could otherwise be seen twice.
+  const last = J.recent.find((j) => j.status === 'done');
+  if (S.doneCount != null && last && last.finished > (S.lastDone ?? 0))
+    toast(t('toast.saved', { title: last.title, size: bytes(last.size_before - last.size_after) }), 'good');
   if (S.doneCount != null && J.totals.n !== S.doneCount) {
-    // Done: Sonarr/Radarr need a moment for the rescan; then reload the library.
-    const last = J.recent.find((j) => j.status === 'done');
-    if (last) toast(t('toast.saved', { title: last.title, size: bytes(last.size_before - last.size_after) }), 'good');
+    // Sonarr/Radarr need a moment for the rescan; then reload the library.
     setTimeout(() => loadLibrary().then(() => S.route === 'library' && updateGrid()), 25000);
   }
   S.doneCount = J.totals.n;
+  S.lastDone = Math.max(S.lastDone ?? 0, last?.finished ?? 0);
   if (S.route === 'queue') drawQueue();
   else if (S.route === 'history') drawHistory();
   else if (S.route === 'library' && S.lib) { updateOverlays(); updateStats(); }
