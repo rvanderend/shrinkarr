@@ -1,0 +1,115 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Shrinkarr",
+        "description": "The address of Shrinkarr and its API key, from Settings → Login in Shrinkarr.",
+        "data": {
+          "url": "Address",
+          "api_key": "API key"
+        },
+        "data_description": {
+          "url": "For example http://192.168.1.20:8080. Use the LAN address, not one behind a login (Authelia, Authentik).",
+          "api_key": "Settings → Login → API key in Shrinkarr."
+        }
+      },
+      "reauth_confirm": {
+        "title": "New API key",
+        "description": "Shrinkarr at {url} no longer accepts the API key. Copy the current key from Settings → Login.",
+        "data": {
+          "api_key": "API key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Shrinkarr can't be reached at this address.",
+      "invalid_auth": "The API key is not right.",
+      "too_old": "This Shrinkarr has no API key yet. Update Shrinkarr to 1.0.4 or newer."
+    },
+    "abort": {
+      "already_configured": "This Shrinkarr is already set up.",
+      "reauth_successful": "The new API key works."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "to_save": {
+        "name": "To save"
+      },
+      "saved": {
+        "name": "Saved"
+      },
+      "library_size": {
+        "name": "Library"
+      },
+      "savings": {
+        "name": "To gain"
+      },
+      "titles_todo": {
+        "name": "Titles to do"
+      },
+      "encode_time": {
+        "name": "Encode time"
+      },
+      "status": {
+        "name": "Status",
+        "state": {
+          "running": "Converting",
+          "paused": "Paused",
+          "waiting": "Waiting for the time window",
+          "waiting_auto": "Waiting for the automatic window",
+          "idle": "Idle",
+          "setup": "Not set up"
+        }
+      },
+      "queue": {
+        "name": "Queue"
+      },
+      "queue_time": {
+        "name": "Queue time"
+      },
+      "progress": {
+        "name": "Current conversion"
+      },
+      "done": {
+        "name": "Conversions done"
+      },
+      "kept": {
+        "name": "Kept originals"
+      },
+      "kept_next_delete": {
+        "name": "Next original deleted"
+      },
+      "gpu_busy": {
+        "name": "GPU busy"
+      },
+      "gpu_temperature": {
+        "name": "GPU temperature"
+      },
+      "cpu": {
+        "name": "Processor"
+      }
+    },
+    "binary_sensor": {
+      "failed": {
+        "name": "Failed conversions"
+      },
+      "encoding": {
+        "name": "Encoding"
+      }
+    },
+    "switch": {
+      "queue_running": {
+        "name": "Queue"
+      }
+    },
+    "button": {
+      "start_now": {
+        "name": "Start now"
+      },
+      "purge_kept": {
+        "name": "Delete kept originals"
+      }
+    }
+  }
+}

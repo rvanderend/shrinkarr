@@ -1,0 +1,115 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Shrinkarr",
+        "description": "Het adres van Shrinkarr en de API-sleutel, uit Instellingen → Inloggen in Shrinkarr.",
+        "data": {
+          "url": "Adres",
+          "api_key": "API-sleutel"
+        },
+        "data_description": {
+          "url": "Bijvoorbeeld http://192.168.1.20:8080. Gebruik het LAN-adres, niet een adres achter een login (Authelia, Authentik).",
+          "api_key": "Instellingen → Inloggen → API-sleutel in Shrinkarr."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Nieuwe API-sleutel",
+        "description": "Shrinkarr op {url} accepteert de API-sleutel niet meer. Kopieer de huidige sleutel uit Instellingen → Inloggen.",
+        "data": {
+          "api_key": "API-sleutel"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Shrinkarr is op dit adres niet bereikbaar.",
+      "invalid_auth": "De API-sleutel klopt niet.",
+      "too_old": "Deze Shrinkarr heeft nog geen API-sleutel. Werk Shrinkarr bij naar 1.0.4 of nieuwer."
+    },
+    "abort": {
+      "already_configured": "Deze Shrinkarr is al ingesteld.",
+      "reauth_successful": "De nieuwe API-sleutel werkt."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "to_save": {
+        "name": "Te besparen"
+      },
+      "saved": {
+        "name": "Bespaard"
+      },
+      "library_size": {
+        "name": "Bibliotheek"
+      },
+      "savings": {
+        "name": "Te winnen"
+      },
+      "titles_todo": {
+        "name": "Titels te doen"
+      },
+      "encode_time": {
+        "name": "Omzettijd"
+      },
+      "status": {
+        "name": "Status",
+        "state": {
+          "running": "Bezig met omzetten",
+          "paused": "Gepauzeerd",
+          "waiting": "Wacht op het tijdvenster",
+          "waiting_auto": "Wacht op het venster voor automatisch",
+          "idle": "Niets te doen",
+          "setup": "Niet ingesteld"
+        }
+      },
+      "queue": {
+        "name": "Wachtrij"
+      },
+      "queue_time": {
+        "name": "Duur wachtrij"
+      },
+      "progress": {
+        "name": "Huidige omzetting"
+      },
+      "done": {
+        "name": "Omzettingen klaar"
+      },
+      "kept": {
+        "name": "Bewaarde originelen"
+      },
+      "kept_next_delete": {
+        "name": "Volgend origineel weg"
+      },
+      "gpu_busy": {
+        "name": "GPU bezet"
+      },
+      "gpu_temperature": {
+        "name": "GPU-temperatuur"
+      },
+      "cpu": {
+        "name": "Processor"
+      }
+    },
+    "binary_sensor": {
+      "failed": {
+        "name": "Mislukte omzettingen"
+      },
+      "encoding": {
+        "name": "Aan het omzetten"
+      }
+    },
+    "switch": {
+      "queue_running": {
+        "name": "Wachtrij"
+      }
+    },
+    "button": {
+      "start_now": {
+        "name": "Nu starten"
+      },
+      "purge_kept": {
+        "name": "Bewaarde originelen verwijderen"
+      }
+    }
+  }
+}

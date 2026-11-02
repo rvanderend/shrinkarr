@@ -25,6 +25,7 @@
 - **Never replaces a file someone is watching** in Plex: it waits until playback stops.
 - **Converts new downloads automatically** (optional) through a webhook from Sonarr/Radarr, inside a time window, for example at night.
 - **Sends a daily summary** by e-mail or Pushover.
+- **Works with Home Assistant:** sensors, a pause switch and a dashboard card, see [Home Assistant](#home-assistant).
 - English and Dutch, light and dark, works well on a phone.
 
 ## Screenshots
@@ -108,6 +109,44 @@ Settings → Automatic conversion → **Set up the webhooks in Sonarr/Radarr** c
 
 The webhook address must be reachable from Sonarr/Radarr without a login. By default it's the LAN address of the container; the URL contains a secret token.
 
+## Home Assistant
+
+The `custom_components/shrinkarr` folder is an integration for Home Assistant (2025.1 or newer): sensors, controls and a dashboard card that follows your theme.
+
+**Install** with HACS: ⋮ → **Custom repositories** → `https://github.com/rvanderend/shrinkarr`, type **Integration**. Install **Shrinkarr**, restart Home Assistant, then **Settings → Devices & services → Add integration → Shrinkarr** with the LAN address of Shrinkarr (not one behind a login) and the API key from Settings → Login. If you make a new key later, Home Assistant asks for it.
+
+**The card** ships with the integration. Add a card, search for **Shrinkarr**, or in YAML:
+
+```yaml
+type: custom:shrinkarr-card
+variant: full      # full | compact | kept | gpu
+url: https://shrinkarr.example.com   # optional: opened when you tap the title
+language: nl       # optional: nl or en; by default the card follows your Home Assistant language
+```
+
+| Variant | Shows |
+|---|---|
+| `full` | The ring with what is left to gain, to save, saved and remaining; the running conversion; library, encode time, titles to do and done. Pause/resume, and *Start now* while waiting for the time window. |
+| `compact` | The ring, to save and saved, a pause button, and a line each for the running conversion, the queue with its total time, and the kept originals with a *Now* button to delete them. |
+| `kept` | The kept originals: how much is freed on which day, when the first one goes, and *Delete now* (asks first). |
+| `gpu` | How busy the graphics card is per engine, temperature, clock speed, processor and whether it is limited (power or heat). |
+
+With more than one Shrinkarr, add `entry_id:` to pick one.
+
+**Entities** (ids in English; with Home Assistant in Dutch for example `sensor.shrinkarr_te_besparen`):
+
+| Entity | |
+|---|---|
+| `sensor.shrinkarr_to_save`, `sensor.shrinkarr_saved`, `sensor.shrinkarr_to_gain` | What converting the rest would still save, saved so far, and the percentage |
+| `sensor.shrinkarr_library`, `sensor.shrinkarr_titles_to_do`, `sensor.shrinkarr_encode_time` | Library size, what is left, and how long converting it would take |
+| `sensor.shrinkarr_status`, `sensor.shrinkarr_queue`, `sensor.shrinkarr_queue_time` | Converting, paused, waiting or idle; files in the queue and their total time |
+| `sensor.shrinkarr_current_conversion` | Progress in % (attributes: title, episode, stage, seconds left, fps, speed) |
+| `sensor.shrinkarr_kept_originals`, `sensor.shrinkarr_next_original_deleted` | Space taken by kept originals, and when the next one is deleted |
+| `sensor.shrinkarr_gpu_busy`, `sensor.shrinkarr_gpu_temperature`, `sensor.shrinkarr_processor` | The graphics card and processor |
+| `binary_sensor.shrinkarr_encoding`, `binary_sensor.shrinkarr_failed_conversions` | A conversion is running; the history has failed conversions |
+| `switch.shrinkarr_queue` | Off = paused (the running conversion still finishes) |
+| `button.shrinkarr_start_now`, `button.shrinkarr_delete_kept_originals` | Ignore the time window once; delete every kept original now (those conversions can no longer be undone) |
+
 ## Updating
 
 ```bash
@@ -141,6 +180,7 @@ app/arr.py         Sonarr, Radarr, Plex and path mapping
 app/auto.py        webhooks, history catch-up, daily summary
 app/gpu.py         live GPU information (sysfs, fdinfo, vainfo, nvidia-smi)
 app/static/        web UI: vanilla JS modules, no build step (i18n.js holds the texts)
+custom_components/ Home Assistant integration and card (shrinkarr-card.js, no build step)
 install/           install.sh (Debian/Ubuntu) and proxmox.sh (LXC)
 ```
 

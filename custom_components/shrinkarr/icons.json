@@ -1,0 +1,83 @@
+{
+  "entity": {
+    "sensor": {
+      "to_save": {
+        "default": "mdi:arrow-collapse-vertical"
+      },
+      "saved": {
+        "default": "mdi:content-save-check-outline"
+      },
+      "library_size": {
+        "default": "mdi:harddisk"
+      },
+      "savings": {
+        "default": "mdi:percent-circle-outline"
+      },
+      "titles_todo": {
+        "default": "mdi:format-list-checks"
+      },
+      "encode_time": {
+        "default": "mdi:timer-sand"
+      },
+      "status": {
+        "default": "mdi:movie-open-play-outline",
+        "state": {
+          "paused": "mdi:pause-circle-outline",
+          "idle": "mdi:check-circle-outline",
+          "waiting": "mdi:clock-outline",
+          "waiting_auto": "mdi:clock-outline",
+          "setup": "mdi:cog-outline"
+        }
+      },
+      "queue": {
+        "default": "mdi:tray-full"
+      },
+      "queue_time": {
+        "default": "mdi:timer-outline"
+      },
+      "progress": {
+        "default": "mdi:progress-clock"
+      },
+      "done": {
+        "default": "mdi:check-all"
+      },
+      "kept": {
+        "default": "mdi:delete-clock-outline"
+      },
+      "kept_next_delete": {
+        "default": "mdi:calendar-clock"
+      },
+      "gpu_busy": {
+        "default": "mdi:expansion-card-variant"
+      },
+      "cpu": {
+        "default": "mdi:cpu-64-bit"
+      }
+    },
+    "binary_sensor": {
+      "failed": {
+        "default": "mdi:alert-circle-outline"
+      },
+      "encoding": {
+        "default": "mdi:expansion-card-variant"
+      }
+    },
+    "switch": {
+      "queue_running": {
+        "default": "mdi:play-pause",
+        "state": {
+          "on": "mdi:play",
+          "off": "mdi:pause"
+        }
+      }
+    },
+    "button": {
+      "start_now": {
+        "default": "mdi:play-speed"
+      },
+      "purge_kept": {
+        "default": "mdi:delete-sweep-outline"
+      }
+    }
+  }
+}
