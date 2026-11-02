@@ -190,9 +190,12 @@ class Worker:
         if not media.streams(p, "video"):
             raise Skip(tr("no_video"))
         vi = media.video_info(p)
-        if vi["codec"] in media.EFFICIENT:
+        dts = bool(db.get_settings()["dts_to_eac3"])
+        plan = media.plan_streams(p, dts)
+        # Video already efficient: only the audio, if there is DTS to convert.
+        audio_only = vi["codec"] in media.EFFICIENT
+        if audio_only and not plan["convert"]:
             raise Skip(tr("already", codec=vi["codec"].upper()))
-        plan = media.plan_streams(p)
         if plan["unsupported_subs"]:
             raise Skip(tr("bad_subs", codecs=", ".join(plan["unsupported_subs"])))
         dur = media.duration_of(p)
@@ -203,7 +206,7 @@ class Worker:
 
         # 2. Keep closed captions in the video stream as SRT
         cc_path = None
-        if vi["closed_captions"]:
+        if vi["closed_captions"] and not audio_only:  # a copied video stream keeps its captions
             db.update_job(jid, stage="cc")
             if not await media.extract_cc(src, str(cc), config.WORK_DIR):
                 raise Skip(tr("cc_failed"))
@@ -212,7 +215,7 @@ class Worker:
 
         # 3. Convert
         db.update_job(jid, stage="encode", progress=0)
-        hw = encoders.can_hw_decode(enc, vi)
+        hw = encoders.can_hw_decode(enc, vi) and not audio_only
         started = time.monotonic()
         last_write = [0.0]
 
@@ -227,7 +230,8 @@ class Worker:
             db.update_job(jid, progress=frac, fps=fps, speed=speed, eta=eta, cur_size=size)
 
         try:
-            res = await media.run_ffmpeg(media.build_cmd(p, src, str(out), enc, q, hw, cc_srt=cc_path),
+            res = await media.run_ffmpeg(media.build_cmd(p, src, str(out), enc, q, hw, cc_srt=cc_path,
+                                                         dts=dts, audio_only=audio_only),
                                          on_progress, self.proc)
         except media.FFmpegError as e:
             self._check_cancel()
@@ -236,7 +240,8 @@ class Worker:
             log.warning("Hardware decoding failed (%s); trying again with software decoding", e)
             db.update_job(jid, stage="encode_sw", progress=0)
             hw = False
-            res = await media.run_ffmpeg(media.build_cmd(p, src, str(out), enc, q, False, cc_srt=cc_path),
+            res = await media.run_ffmpeg(media.build_cmd(p, src, str(out), enc, q, False, cc_srt=cc_path,
+                                                         dts=dts, audio_only=audio_only),
                                          on_progress, self.proc)
         self._check_cancel()
         enc_seconds = time.monotonic() - started
@@ -246,12 +251,17 @@ class Worker:
         op = await media.probe(str(out))
         new_size = out.stat().st_size
         ov = media.streams(op, "video")
-        if not ov or ov[0].get("codec_name") != "hevc":
-            raise RuntimeError(tr("no_hevc"))
-        n_audio, n_subs = len(media.streams(op, "audio")), len(media.streams(op, "subtitle"))
+        if not ov or ov[0].get("codec_name") != ("hevc" if not audio_only else vi["codec"]):
+            raise RuntimeError(tr("no_hevc") if not audio_only else tr("video_changed"))
+        oa = media.streams(op, "audio")
+        n_audio, n_subs = len(oa), len(media.streams(op, "subtitle"))
         want_subs = len(plan["subs"]) + (1 if cc_path else 0)
         if n_audio != len(plan["audio"]):
             raise RuntimeError(tr("audio_count", got=n_audio, want=len(plan["audio"])))
+        for i in plan["convert"]:
+            want_ch = min(int(plan["audio"][i].get("channels") or 2), 6)
+            if oa[i].get("codec_name") != "eac3" or int(oa[i].get("channels") or 0) not in (want_ch, 6 if want_ch > 2 else 2):
+                raise RuntimeError(tr("audio_not_eac3", n=i + 1))
         if n_subs != want_subs:
             raise RuntimeError(tr("sub_count", got=n_subs, want=want_subs))
         odur = media.duration_of(op)
@@ -265,12 +275,17 @@ class Worker:
         ratio = new_vbytes / src_vbytes if src_vbytes else None
         pixels = max(vi["width"] * vi["height"], 1) * vi["fps"]
         src_bpp = src_vbytes * 8 / dur / pixels if dur else 0
-        db.add_observation(preset, bkt, vi["codec"], ratio if src_bpp >= 0.08 else None,
-                           fps if hw or enc["encoder"] == "cpu" else None, "job", enc["encoder"])
+        if not audio_only:
+            # Converted audio would skew the ratio: then only the size reported for the video stream counts.
+            if plan["convert"] and not res.get("video_bytes"):
+                ratio = None
+            db.add_observation(preset, bkt, vi["codec"], ratio if src_bpp >= 0.08 else None,
+                               fps if hw or enc["encoder"] == "cpu" else None, "job", enc["encoder"])
 
         s = db.get_settings()
         saved_pct = (1 - new_size / st.st_size) * 100
-        if saved_pct < s["min_savings"]:
+        # Converting only the audio is about playback, not space: the minimum savings don't apply.
+        if not audio_only and saved_pct < s["min_savings"]:
             raise Skip(tr("too_little", pct=saved_pct, min=s["min_savings"]))
 
         # 5. Don't replace while someone is watching this file in Plex
@@ -327,6 +342,7 @@ class Worker:
             notes.append(tr("plex_failed", err=e))
         asyncio.create_task(self._refresh_later(job["kind"], job["arr_id"]))
         msg = tr("smaller", pct=saved_pct) + (tr("plus_cc") if cc_path else "") + \
+            (tr("plus_eac3", n=len(plan["convert"])) if plan["convert"] else "") + \
             ("; " + "; ".join(notes) if notes else "")
         extra = {"kept_path": str(kept), "kept_until": time.time() + keep_days * 86400, "orig_path": src} if kept else {}
         return {"size_after": new_size, "message": msg, "path": str(final), **extra}

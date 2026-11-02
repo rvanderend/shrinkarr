@@ -32,6 +32,10 @@ PRESETS = {
 }
 ENCODERS = ("qsv", "vaapi", "nvenc", "cpu")
 
+# DTS -> E-AC3. ffmpeg's eac3 encoder is simpler than Dolby's, so the bitrates are generous: streaming
+# services use 640-768k for 5.1. The encoder goes up to 5.1; more channels (6.1, 7.1) are downmixed to 5.1.
+EAC3_BITRATE = {1: 192_000, 2: 320_000, 6: 1_024_000}
+
 DEFAULT_SETTINGS = {
     "language": "en",              # language of server messages and notifications (the UI follows the browser)
     "setup_done": False,
@@ -49,6 +53,7 @@ DEFAULT_SETTINGS = {
     "preset": "balanced",
     "min_savings": 15,             # percent; less gain = keep the original
     "keep_days": 0,                # keep replaced originals this many days (0 = delete right away)
+    "dts_to_eac3": False,          # convert DTS audio to E-AC3, also in files whose video is already efficient
     "window_enabled": False,       # only start new jobs inside a time window
     "window_start": "01:00",
     "window_end": "08:00",

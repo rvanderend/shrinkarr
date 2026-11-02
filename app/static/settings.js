@@ -327,6 +327,8 @@ export async function renderSettings(S) {
         <div class="srow"><input type="range" id="min-sav" min="0" max="50" step="5" value="${s.min_savings}" aria-label="${t('set.minSavings')}"><b class="num" id="min-sav-v">${s.min_savings}%</b></div>
         <h4>${t('set.keep')}</h4><p class="help">${t('set.keepHelp')}</p>
         <div class="srow">${sel('keep-days', [0, 1, 3, 7, 14, 30].map((n) => [n, n ? t('set.keepDays', { n }) : t('set.keepOff')]), s.keep_days)}</div>
+        <h4>${t('set.dts')}</h4><p class="help">${t('set.dtsHelp')}</p>
+        <div class="srow">${sw('dts-on', s.dts_to_eac3, t('set.on'))}</div>
         <h4>${t('set.window')}</h4><p class="help">${t('set.windowHelp')}</p>
         <div class="srow">${sw('win-on', s.window_enabled)}<span>${t('set.from_')}</span><input type="time" id="win-a" value="${esc(s.window_start)}"><span>${t('set.to_')}</span><input type="time" id="win-b" value="${esc(s.window_end)}"></div>`)}
 
@@ -395,6 +397,7 @@ export async function renderSettings(S) {
   $('#min-sav').oninput = (e) => { $('#min-sav-v').textContent = e.target.value + '%'; };
   $('#min-sav').onchange = (e) => save({ min_savings: +e.target.value });
   $('#keep-days').onchange = (e) => save({ keep_days: +e.target.value });
+  $('#dts-on').onchange = async (e) => { await save({ dts_to_eac3: e.target.checked }); S.lib = null; };
   const bind = (id, key, val = (e) => e.target.checked) => { $('#' + id).onchange = (e) => save({ [key]: val(e) }); };
   bind('win-on', 'window_enabled'); bind('win-a', 'window_start', (e) => e.target.value); bind('win-b', 'window_end', (e) => e.target.value);
   // automatic
