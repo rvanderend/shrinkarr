@@ -588,6 +588,7 @@ async def stats(preset: str | None = None):
         "kept": {
             "count": len(kept), "bytes": sum(i["size"] for i in kept), "days": s["keep_days"],
             "nextDelete": kept[0]["until"] if kept else None,
+            "items": [[i["until"], i["size"]] for i in kept],  # [delete at, bytes]: what is freed when
         },
         "gpu": {
             "name": (await gpu.static_info(enc))["name"], "encoder": enc["encoder"], "encoding": pid is not None,
