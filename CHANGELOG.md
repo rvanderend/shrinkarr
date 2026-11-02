@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.4
 
 - **Home Assistant:** an integration (install with HACS from this repository) with sensors for the savings, the queue, the kept originals and the GPU, a switch to pause the queue, buttons for *Start now* and deleting the kept originals, and a card in four variants (`full`, `compact`, `kept`, `gpu`) in Dutch or English. See the README.
 - **API key** (Settings → Login): for Home Assistant and other tools. Send it in the `X-Api-Key` header (or as `?apikey=`); it also works with the login on. *New key* replaces it, and the old key stops working right away.

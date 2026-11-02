@@ -7,7 +7,7 @@ older installs that were configured through /etc/shrinkarr/config.env.
 import os
 from pathlib import Path
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 REPO = "rvanderend/shrinkarr"
 
 
