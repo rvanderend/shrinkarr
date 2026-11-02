@@ -1,4 +1,4 @@
-"""Optional login: one user, a scrypt password hash and a signed session cookie."""
+"""Optional login: one user, a scrypt password hash and a signed session cookie, plus an API key for other tools."""
 import base64
 import hashlib
 import hmac
@@ -67,3 +67,21 @@ def check_cookie(value: str | None) -> str | None:
     if str(db.get_state("session_epoch", 0)) != epoch or user != db.get_settings()["auth_user"]:
         return None
     return user
+
+
+def api_key() -> str:
+    """Key for tools like Home Assistant (header X-Api-Key); created on first use."""
+    key = db.get_state("api_key")
+    if not key:
+        key = new_api_key()
+    return key
+
+
+def new_api_key() -> str:
+    key = secrets.token_hex(16)
+    db.set_state("api_key", key)
+    return key
+
+
+def check_api_key(value: str | None) -> bool:
+    return bool(value) and hmac.compare_digest(value, api_key())

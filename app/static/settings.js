@@ -274,13 +274,17 @@ function bindNotify(root) {
 }
 
 // --- login ----------------------------------------------------------------------------
-function authHtml(s, enabled) {
+function authHtml(s, enabled, key) {
   return `${sw('a-on', enabled, t('set.authOn'))}
     <div class="form" style="margin-top:10px">
       ${field(t('login.user'), inp('a-user', s.auth_user, 'autocomplete="username"'))}
       ${field(enabled ? t('set.newPassword') : t('login.password'), inp('a-pass', '', `type="password" autocomplete="new-password" placeholder="${esc(enabled ? t('set.keepPassword') : t('set.minChars'))}"`))}
     </div>
-    <div class="srow"><button class="btn sm primary" id="a-save">${t('common.save')}</button><span id="a-res"></span></div>`;
+    <div class="srow"><button class="btn sm primary" id="a-save">${t('common.save')}</button><span id="a-res"></span></div>
+    <h4>${t('set.apiKeyOwn')}</h4><p class="help">${t('set.apiKeyHelp')}</p>
+    <div class="hook-urls"><div class="mono hook-url"><b>X-Api-Key</b> <span id="a-key">${esc(key)}</span>
+      <button class="btn sm ghost" id="a-key-copy" data-copy="${esc(key)}" aria-label="${t('set.copy')}" title="${t('set.copy')}">${I.copy}</button></div></div>
+    <div class="srow"><button class="btn sm" id="a-key-new">${I.refresh} ${t('set.apiKeyNew')}</button></div>`;
 }
 function bindAuth(root) {
   $('#a-save', root).onclick = async () => {
@@ -292,6 +296,14 @@ function bindAuth(root) {
       $('#logout-btn').hidden = !r.enabled;
     } catch (e) { out.innerHTML = result({ ok: false, error: e.message }); }
   };
+  $('#a-key-new', root).onclick = async () => {
+    if (!confirm(t('set.apiKeyNewConfirm'))) return;
+    try {
+      const { key } = await post('/api/apikey');
+      $('#a-key', root).textContent = key; $('#a-key-copy', root).dataset.copy = key;
+      toast(t('set.apiKeyNewDone'), 'good');
+    } catch (e) { toast(e.message, 'bad'); }
+  };
 }
 
 // --- the page ---------------------------------------------------------------------------
@@ -299,9 +311,9 @@ export async function renderSettings(S) {
   clearInterval(gpuTimer);
   const v = $('#view');
   v.innerHTML = `<div class="empty"><div class="spinner"></div></div>`;
-  const [setRes, st, enc, hooks, authSt, ver, lib] = await Promise.all([
+  const [setRes, st, enc, hooks, authSt, ver, lib, key] = await Promise.all([
     api('/api/settings'), api('/api/status').catch(() => null), api('/api/encoders'), api('/api/hooks'),
-    api('/api/auth/status'), api('/api/version').catch(() => null), api('/api/library').catch(() => null)]);
+    api('/api/auth/status'), api('/api/version').catch(() => null), api('/api/library').catch(() => null), api('/api/apikey')]);
   SET = setRes.settings;
   const s = SET;
   const roots = lib?.roots || [];
@@ -374,7 +386,7 @@ export async function renderSettings(S) {
 
       ${card('s-notify', t('set.notify'), t('set.notifyHelp'), notifyHtml(s))}
 
-      ${card('s-auth', t('set.login'), t('set.loginHelp'), authHtml(s, authSt.enabled))}
+      ${card('s-auth', t('set.login'), t('set.loginHelp'), authHtml(s, authSt.enabled, key.key))}
 
       ${card('s-gpu', 'GPU', t('set.gpuHelp'), `<div id="gpu-body"><div class="spinner"></div></div>`)}
 

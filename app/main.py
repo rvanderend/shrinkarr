@@ -50,7 +50,8 @@ PUBLIC_API = ("/api/auth/", "/api/hook/", "/api/health")
 async def require_login(request: Request, call_next):
     path = request.url.path
     if path.startswith("/api/") and not path.startswith(PUBLIC_API) and auth.enabled():
-        if not auth.check_cookie(request.cookies.get(auth.COOKIE)):
+        key = request.headers.get("x-api-key") or request.query_params.get("apikey")
+        if not auth.check_cookie(request.cookies.get(auth.COOKIE)) and not auth.check_api_key(key):
             return JSONResponse({"detail": "login"}, status_code=401)
     return await call_next(request)
 
@@ -210,9 +211,7 @@ async def _model() -> media.Model:
     return media.Model((await encoders.resolve())["encoder"])
 
 
-@app.get("/api/library")
-async def library(preset: str | None = None):
-    preset = _preset(preset)
+async def _library_items(preset: str) -> tuple[list[dict], media.Model]:
     if not arr.LIB.refreshed:
         await arr.LIB.refresh()
     model, active, saved = await _model(), _active_jobs(), _saved_by_item()
@@ -221,6 +220,13 @@ async def library(preset: str | None = None):
         s = _summary(it, preset, model, active, saved)
         s.pop("_files")
         items.append(s)
+    return items, model
+
+
+@app.get("/api/library")
+async def library(preset: str | None = None):
+    preset = _preset(preset)
+    items, model = await _library_items(preset)
     roots = [{**r, "writable": writable(arr.to_local(r["path"]))} for app_ in arr.APPS for r in arr.LIB.roots.get(app_, [])]
     return {"items": items, "preset": preset, "refreshed": arr.LIB.refreshed, "error": arr.LIB.error,
             "learned": model.count, "roots": roots,
@@ -440,6 +446,11 @@ async def job_undo(job_id: int):
 @app.get("/api/kept")
 async def kept_list():
     """The kept originals: what is in the 'trash' and when it gets deleted."""
+    items = _kept_items()
+    return {"items": items, "bytes": sum(i["size"] for i in items)}
+
+
+def _kept_items() -> list[dict]:
     rows = db.q("SELECT id, title, subtitle, kept_path, kept_until, size_before FROM jobs "
                 "WHERE kept_path IS NOT NULL ORDER BY kept_until")
     items = []
@@ -449,7 +460,7 @@ async def kept_list():
         except OSError:
             continue  # already gone; the hourly clean-up clears the row
         items.append({"id": r["id"], "title": r["title"], "subtitle": r["subtitle"], "size": size, "until": r["kept_until"]})
-    return {"items": items, "bytes": sum(i["size"] for i in items)}
+    return items
 
 
 @app.post("/api/kept/purge")
@@ -537,6 +548,64 @@ async def status():
         "learned": len(db.observations(enc["encoder"])),
         "hooks": {"sonarr": db.get_state("hook_sonarr"), "radarr": db.get_state("hook_radarr")},
     }
+
+
+@app.get("/api/stats")
+async def stats(preset: str | None = None):
+    """Everything a dashboard (Home Assistant) shows, in one small call: the Library card,
+    the queue, the kept originals and the GPU."""
+    preset = _preset(preset)
+    items, _ = await _library_items(preset)
+    size = sum(i["size"] for i in items)
+    est = sum(i["estSize"] for i in items)
+    conv = [i for i in items if i["convertible"]]
+    movies = sum(1 for i in items if i["kind"] == "movie")
+    done = db.one("SELECT COUNT(*) AS n, COALESCE(SUM(size_before - size_after), 0) AS saved FROM jobs WHERE status='done'")
+    counts = {r["status"]: r["n"] for r in db.q("SELECT status, COUNT(*) AS n FROM jobs GROUP BY status")}
+    queued = db.one("SELECT COALESCE(SUM(est_seconds), 0) AS secs, COALESCE(SUM(size_before - est_size), 0) AS save "
+                    "FROM jobs WHERE status='queued'")
+    run = db.one("SELECT id, title, subtitle, stage, progress, fps, speed, eta, size_before, est_size, cur_size, started "
+                 "FROM jobs WHERE status='running'")
+    kept = _kept_items()
+    enc = await encoders.resolve()
+    proc = WORKER.proc.get("proc")
+    pid = proc.pid if proc and proc.returncode is None else None
+    live = await gpu.live(enc, pid)
+    s = db.get_settings()
+    return {
+        "version": config.VERSION,
+        "library": {
+            "size": size, "estSize": est, "toSave": max(0, size - est), "saved": done["saved"],
+            "pct": max(0, round((1 - est / size) * 100)) if size else 0,
+            "encodeSeconds": sum(i["estSeconds"] for i in conv), "titlesTodo": len(conv),
+            "movies": movies, "series": len(items) - movies, "preset": preset, "refreshed": arr.LIB.refreshed,
+        },
+        "queue": {
+            "state": WORKER.state, "paused": s["paused"], "queued": counts.get("queued", 0),
+            "queuedSeconds": queued["secs"], "queuedSave": max(0, queued["save"]),
+            "done": done["n"], "failed": counts.get("failed", 0), "current": run,
+        },
+        "kept": {
+            "count": len(kept), "bytes": sum(i["size"] for i in kept), "days": s["keep_days"],
+            "nextDelete": kept[0]["until"] if kept else None,
+        },
+        "gpu": {
+            "name": (await gpu.static_info(enc))["name"], "encoder": enc["encoder"], "encoding": pid is not None,
+            "busy": live["busy"], "engines": live["engines"], "freq": live["freq"], "temp": live["temp"],
+            "throttle": live["throttle"], "cpu": live["cpu"],
+        },
+    }
+
+
+@app.get("/api/apikey")
+async def apikey_get():
+    return {"key": auth.api_key()}
+
+
+@app.post("/api/apikey")
+async def apikey_new():
+    """A new key; the old one stops working right away."""
+    return {"key": auth.new_api_key()}
 
 
 # --- setup wizard and tests ----------------------------------------------------------------

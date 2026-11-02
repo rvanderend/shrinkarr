@@ -128,7 +128,7 @@ A running conversion starts again after the restart; pause the queue first if yo
 
 ## Security
 
-Shrinkarr has an optional login (one user, scrypt-hashed password, signed session cookie). Without it, anyone on your network can use it, so either turn it on or put it behind a reverse proxy with its own login (Authelia, Authentik). The webhook endpoint is protected by its own token and stays reachable for Sonarr/Radarr either way. API keys and tokens are stored in the database in the container and are only shown masked in the UI.
+Shrinkarr has an optional login (one user, scrypt-hashed password, signed session cookie). Without it, anyone on your network can use it, so either turn it on or put it behind a reverse proxy with its own login (Authelia, Authentik). The webhook endpoint is protected by its own token and stays reachable for Sonarr/Radarr either way. Other tools (Home Assistant, scripts) use the API key from Settings → Login in the `X-Api-Key` header; `/api/stats` has a summary for dashboards. API keys and tokens are stored in the database in the container and are only shown masked in the UI.
 
 ## Development
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **API key** (Settings → Login): for Home Assistant and other tools. Send it in the `X-Api-Key` header (or as `?apikey=`); it also works with the login on. *New key* replaces it, and the old key stops working right away.
+- **`GET /api/stats`:** the numbers of the Library card, the queue (with the running conversion), the kept originals and the GPU in one small call, for dashboards.
+
 ## 1.0.3
 
 - **Keep originals:** Settings → Encoding shows how many originals are kept, how much space they take and when the next one is deleted, with the list of files (each with its own delete button) and a *Delete now* button for all of them.
