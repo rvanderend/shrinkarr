@@ -437,6 +437,35 @@ async def job_undo(job_id: int):
     return {"ok": True}
 
 
+@app.get("/api/kept")
+async def kept_list():
+    """The kept originals: what is in the 'trash' and when it gets deleted."""
+    rows = db.q("SELECT id, title, subtitle, kept_path, kept_until, size_before FROM jobs "
+                "WHERE kept_path IS NOT NULL ORDER BY kept_until")
+    items = []
+    for r in rows:
+        try:
+            size = os.path.getsize(r["kept_path"])
+        except OSError:
+            continue  # already gone; the hourly clean-up clears the row
+        items.append({"id": r["id"], "title": r["title"], "subtitle": r["subtitle"], "size": size, "until": r["kept_until"]})
+    return {"items": items, "bytes": sum(i["size"] for i in items)}
+
+
+@app.post("/api/kept/purge")
+async def kept_purge():
+    """Deletes every kept original now; those conversions can no longer be undone."""
+    return {"removed": await asyncio.to_thread(auto.clean_kept, True)}
+
+
+@app.delete("/api/kept/{job_id}")
+async def kept_delete(job_id: int):
+    """Deletes one kept original now; that conversion can no longer be undone."""
+    if not await asyncio.to_thread(auto.clean_kept, False, job_id):
+        raise HTTPException(404)
+    return {"ok": True}
+
+
 @app.post("/api/jobs/{job_id}/top")
 async def job_top(job_id: int):
     pos = (db.one("SELECT MIN(position) AS p FROM jobs WHERE status='queued'")["p"] or 1) - 1

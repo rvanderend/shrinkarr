@@ -338,6 +338,7 @@ export async function renderSettings(S) {
         <div class="srow"><input type="range" id="min-sav" min="0" max="50" step="5" value="${s.min_savings}" aria-label="${t('set.minSavings')}"><b class="num" id="min-sav-v">${s.min_savings}%</b></div>
         <h4>${t('set.keep')}</h4><p class="help">${t('set.keepHelp')}</p>
         <div class="srow">${sel('keep-days', [0, 1, 3, 7, 14, 30].map((n) => [n, n ? t('set.keepDays', { n }) : t('set.keepOff')]), s.keep_days)}</div>
+        <div id="kept-body"></div>
         <h4>${t('set.dts')}</h4><p class="help">${t('set.dtsHelp')}</p>
         <div class="srow">${sw('dts-on', s.dts_to_eac3, t('set.on'))}</div>
         <h4>${t('set.langs')}</h4><p class="help">${t('set.langsHelp')}</p>
@@ -416,6 +417,33 @@ export async function renderSettings(S) {
   $('#min-sav').oninput = (e) => { $('#min-sav-v').textContent = e.target.value + '%'; };
   $('#min-sav').onchange = (e) => save({ min_savings: +e.target.value });
   $('#keep-days').onchange = (e) => save({ keep_days: +e.target.value });
+  const renderKept = async (open = false) => {
+    const k = await api('/api/kept').catch(() => null);
+    const el = $('#kept-body'); if (!k || !el) return;
+    el.innerHTML = k.items.length ? `
+      <div class="srow kept-sum"><span>${t('set.keptSummary', { n: k.items.length, size: bytes(k.bytes), date: when(k.items[0].until) })}</span>
+        <button class="btn sm danger" id="kept-purge">${I.trash} ${t('set.keptPurge')}</button></div>
+      <details class="kept-list" ${open ? 'open' : ''}><summary>${t('set.keptShow')}</summary>${k.items.map((i) => `
+        <div class="kept-row"><span class="t">${esc(i.title)}${i.subtitle ? ` <span class="muted">${esc(i.subtitle)}</span>` : ''}</span>
+          <span class="r"><span class="muted num">${bytes(i.size)} · ${t('set.keptUntil', { date: when(i.until) })}</span>
+            <button class="btn sm ghost" data-kept-del="${i.id}" title="${t('set.keptDelete')}" aria-label="${esc(t('set.keptDelete'))}: ${esc(i.title)}">${I.trash}</button></span></div>`).join('')}</details>`
+      : `<p class="help" style="margin:0">${t('set.keptEmpty')}</p>`;
+    const b = $('#kept-purge');
+    if (b) b.onclick = async () => {
+      if (!confirm(t('set.keptPurgeConfirm', { n: k.items.length, size: bytes(k.bytes) }))) return;
+      b.disabled = true;
+      try { await post('/api/kept/purge'); toast(t('set.keptPurged', { size: bytes(k.bytes) }), 'good'); } catch (e) { toast(e.message, 'bad'); }
+      renderKept();
+    };
+    $$('[data-kept-del]', el).forEach((d) => d.onclick = async () => {
+      const i = k.items.find((x) => String(x.id) === d.dataset.keptDel);
+      if (!confirm(t('set.keptDeleteConfirm', { title: i.title, size: bytes(i.size) }))) return;
+      d.disabled = true;
+      try { await api(`/api/kept/${i.id}`, { method: 'DELETE' }); toast(t('set.keptPurged', { size: bytes(i.size) }), 'good'); } catch (e) { toast(e.message, 'bad'); }
+      renderKept(true);
+    });
+  };
+  renderKept();
   $('#dts-on').onchange = async (e) => { await save({ dts_to_eac3: e.target.checked }); S.lib = null; };
   const list = (v) => v.split(',').map((x) => x.trim()).filter(Boolean);
   let keepLangs = [...(s.audio_keep_languages || [])];

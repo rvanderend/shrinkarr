@@ -170,10 +170,15 @@ async def catch_up():
 
 # --- kept originals ------------------------------------------------------------------
 
-def clean_kept():
-    """Deletes kept originals whose time is up, and folders that become empty."""
+def clean_kept(everything: bool = False, job_id: int | None = None) -> int:
+    """Deletes kept originals whose time is up (or all of them, or one), and folders that become empty."""
     from .worker import KEEP_DIR
-    for j in db.q("SELECT id, kept_path FROM jobs WHERE kept_path IS NOT NULL AND kept_until < ?", (time.time(),)):
+    if job_id is not None:
+        jobs = db.q("SELECT id, kept_path FROM jobs WHERE kept_path IS NOT NULL AND id = ?", (job_id,))
+    else:
+        until = float("inf") if everything else time.time()
+        jobs = db.q("SELECT id, kept_path FROM jobs WHERE kept_path IS NOT NULL AND kept_until < ?", (until,))
+    for j in jobs:
         p = Path(j["kept_path"])
         try:
             p.unlink(missing_ok=True)
@@ -186,6 +191,7 @@ def clean_kept():
         except OSError:
             log.warning("Could not remove the kept original %s", p)
         db.update_job(j["id"], kept_path=None)
+    return len(jobs)
 
 
 # --- notifications -----------------------------------------------------------------

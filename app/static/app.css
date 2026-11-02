@@ -474,6 +474,13 @@ input[type=time] { height: 36px; border-radius: 9px; border: 1px solid var(--bor
 .hook-url { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; border-radius: 10px; background: var(--surface-2); }
 .hook-url span { flex: 1; min-width: 0; }
 .root-list { display: grid; gap: 6px; margin: 4px 0 8px; }
+.kept-sum { font-size: 13.5px; flex-wrap: wrap; }
+.kept-list { margin: 4px 0 8px; font-size: 13px; }
+.kept-list summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.kept-row { display: flex; justify-content: space-between; align-items: center; gap: 4px 12px; flex-wrap: wrap; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.kept-row .r { display: flex; align-items: center; gap: 4px; margin-left: auto; white-space: nowrap; }
+.kept-row:last-child { border-bottom: 0; }
+.kept-row .t { min-width: 0; overflow-wrap: anywhere; }
 .health .h { flex-wrap: wrap; }
 .dot:not(.ok):not(.no) { background: var(--faint); }
 
