@@ -300,6 +300,12 @@ def norm_lang(code) -> str:
     return LANG_ALIASES.get(c, c)
 
 
+def track_lang(s: dict) -> str:
+    """Language of a stream, "" if unknown. An MKV written by ffmpeg has no tag where the source said "und"."""
+    lang = norm_lang(tag(s, "LANGUAGE"))
+    return "" if lang in UNKNOWN_LANGS else lang
+
+
 def audio_rules(s: dict) -> dict:
     """The language rules from the settings, normalised. No languages = keep every track."""
     keep = [norm_lang(x) for x in s.get("audio_keep_languages") or [] if norm_lang(x)]

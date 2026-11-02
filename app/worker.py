@@ -259,10 +259,9 @@ class Worker:
         want_subs = len(plan["subs"]) + (1 if cc_path else 0)
         if n_audio != len(plan["audio"]):
             raise RuntimeError(tr("audio_count", got=n_audio, want=len(plan["audio"])))
-        langs = [media.norm_lang(media.tag(s, "LANGUAGE")) for s in plan["audio"]]
-        if [media.norm_lang(media.tag(s, "LANGUAGE")) for s in oa] != langs:
-            raise RuntimeError(tr("audio_langs", got=", ".join(media.norm_lang(media.tag(s, "LANGUAGE")) or "?" for s in oa),
-                                  want=", ".join(x or "?" for x in langs)))
+        langs, got = [media.track_lang(s) for s in plan["audio"]], [media.track_lang(s) for s in oa]
+        if got != langs:
+            raise RuntimeError(tr("audio_langs", got=", ".join(x or "?" for x in got), want=", ".join(x or "?" for x in langs)))
         for i in plan["convert"]:
             want_ch = min(int(plan["audio"][i].get("channels") or 2), 6)
             if oa[i].get("codec_name") != "eac3" or int(oa[i].get("channels") or 0) not in (want_ch, 6 if want_ch > 2 else 2):
