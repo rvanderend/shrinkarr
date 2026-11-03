@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.5
 
 - **Damaged files:** before encoding, Shrinkarr reads 64 blocks of 1 MB spread over the file (a few seconds). A block of only zeros means the file was never fully downloaded or is damaged; the job then fails right away with *The source file is damaged* instead of failing the duration check after the whole encode. When the duration check fails anyway, the whole original is checked for empty blocks, so a small hole also gets that message.
 - **Delete and search again:** for a damaged file, the History page has a button that deletes the file in Sonarr/Radarr, monitors the movie or episodes again and searches for a new copy.
