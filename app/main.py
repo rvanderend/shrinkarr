@@ -501,8 +501,9 @@ async def kept_delete(job_id: int):
 
 @app.post("/api/jobs/{job_id}/top")
 async def job_top(job_id: int):
+    """Next in line; an automatic job becomes manual, or its window and delay would still hold it back."""
     pos = (db.one("SELECT MIN(position) AS p FROM jobs WHERE status='queued'")["p"] or 1) - 1
-    db.update_job(job_id, position=pos)
+    db.update_job(job_id, position=pos, source="manual", not_before=None)
     return {"ok": True}
 
 

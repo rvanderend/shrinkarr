@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Move to the top** now also works for an automatic job: it becomes a manual job, so its time window and delay no longer hold it back (before, the worker skipped it and started the next manual job). An automatic job at the top keeps the button for this.
+- Queue: the first row no longer shifts to the right because it has no *Move to the top* button.
+
 ## 1.0.5
 
 - **Damaged files:** before encoding, Shrinkarr reads 64 blocks of 1 MB spread over the file (a few seconds). A block of only zeros means the file was never fully downloaded or is damaged; the job then fails right away with *The source file is damaged* instead of failing the duration check after the whole encode. When the duration check fails anyway, the whole original is checked for empty blocks, so a small hole also gets that message.

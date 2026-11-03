@@ -634,7 +634,7 @@ function drawQueue() {
             <img src="${posterOf(j.kind, j.arr_id)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
             <div style="min-width:0"><div class="t">${esc(j.title)} ${autoBadge(j)}</div><div class="s">${esc(j.subtitle)} · ${presetLabel(j.preset)}${autoWhen(j)}</div></div>
             <div class="r num">${bytes(j.size_before)} → <span class="good">~${bytes(j.est_size)}</span><br><span class="muted">~${dur(j.est_seconds)}</span></div>
-            <div class="btns">${n ? `<button class="btn sm ghost" data-top="${j.id}" title="${t('queue.top')}" aria-label="${t('queue.top')}">${I.up}</button>` : ''}
+            <div class="btns"><button class="btn sm ghost" data-top="${j.id}" title="${t('queue.top')}" aria-label="${t('queue.top')}"${n || j.source === 'auto' ? '' : ' style="visibility:hidden" tabindex="-1" aria-hidden="true"'}>${I.up}</button>
               <button class="btn sm ghost" data-cancel="${j.id}" title="${t('queue.remove')}" aria-label="${t('queue.remove')}">${I.trash}</button></div>
           </div>`).join('')}</div>` : ''}
       ${!run && !waiting.length ? `<div class="empty">${I.inbox}<p>${t('queue.empty')}</p></div>` : ''}`;
