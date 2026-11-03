@@ -17,6 +17,7 @@ export const DICT = {
     'stage.skipped': 'Skipped', 'stage.cancelled': 'Cancelled',
     'status.done': 'Done', 'status.failed': 'Failed', 'status.skipped': 'Skipped', 'status.cancelled': 'Cancelled',
     'status.queued': 'Queued', 'status.running': 'Running', 'status.reverted': 'Undone', 'stage.reverted': 'Undone',
+    'status.redownload': 'Searched again', 'stage.redownload': 'Searched again', 'stage.damaged': 'Damaged',
     'err.login': 'Please log in', 'err.wrong': 'Wrong username or password', 'err.short': 'The password needs at least 8 characters',
     'err.user': 'Fill in a username', 'err.password': 'Fill in a password', 'err.busy': 'The GPU is busy with a conversion; try again later',
     'err.nothing': 'Nothing to estimate', 'err.not found': 'Not found', 'err.queued': 'Already in the queue',
@@ -75,6 +76,8 @@ export const DICT = {
     'hist.requeued': 'Back in the queue', 'hist.noLog': '(no log)',
     'hist.keptUntil': 'Original kept until {date}', 'hist.undo': 'Undo',
     'hist.undoConfirm': 'Put the original back and remove the converted file?', 'hist.undone': 'The original is back',
+    'hist.redownload': 'Delete and search again', 'hist.redownloadConfirm': 'Delete this file in {app} and search for it again? The damaged file is gone for good.',
+    'hist.redownloaded': '{app} is searching for a new copy',
 
     'login.user': 'Username', 'login.password': 'Password', 'login.submit': 'Log in', 'login.wrong': 'Wrong username or password',
     'login.required': 'Please log in', 'login.logout': 'Log out',
@@ -205,6 +208,7 @@ export const DICT = {
     'stage.skipped': 'Overgeslagen', 'stage.cancelled': 'Geannuleerd',
     'status.done': 'Klaar', 'status.failed': 'Mislukt', 'status.skipped': 'Overgeslagen', 'status.cancelled': 'Geannuleerd',
     'status.queued': 'In wachtrij', 'status.running': 'Bezig', 'status.reverted': 'Ongedaan', 'stage.reverted': 'Ongedaan',
+    'status.redownload': 'Opnieuw gezocht', 'stage.redownload': 'Opnieuw gezocht', 'stage.damaged': 'Beschadigd',
     'err.login': 'Log eerst in', 'err.wrong': 'Verkeerde gebruikersnaam of wachtwoord', 'err.short': 'Het wachtwoord moet minstens 8 tekens hebben',
     'err.user': 'Vul een gebruikersnaam in', 'err.password': 'Vul een wachtwoord in', 'err.busy': 'De GPU is bezig met een omzetting; probeer het straks opnieuw',
     'err.nothing': 'Niets om te schatten', 'err.not found': 'Niet gevonden', 'err.queued': 'Staat al in de wachtrij',
@@ -263,6 +267,8 @@ export const DICT = {
     'hist.requeued': 'Opnieuw in de wachtrij', 'hist.noLog': '(geen log)',
     'hist.keptUntil': 'Origineel bewaard tot {date}', 'hist.undo': 'Ongedaan maken',
     'hist.undoConfirm': 'Het origineel terugzetten en het omgezette bestand verwijderen?', 'hist.undone': 'Het origineel staat terug',
+    'hist.redownload': 'Verwijderen en opnieuw zoeken', 'hist.redownloadConfirm': 'Dit bestand in {app} verwijderen en opnieuw laten zoeken? Het beschadigde bestand is dan definitief weg.',
+    'hist.redownloaded': '{app} zoekt een nieuwe versie',
 
     'login.user': 'Gebruikersnaam', 'login.password': 'Wachtwoord', 'login.submit': 'Inloggen', 'login.wrong': 'Verkeerde gebruikersnaam of wachtwoord',
     'login.required': 'Log eerst in', 'login.logout': 'Uitloggen',

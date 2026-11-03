@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Damaged files:** before encoding, Shrinkarr reads 64 blocks of 1 MB spread over the file (a few seconds). A block of only zeros means the file was never fully downloaded or is damaged; the job then fails right away with *The source file is damaged* instead of failing the duration check after the whole encode. When the duration check fails anyway, the whole original is checked for empty blocks, so a small hole also gets that message.
+- **Delete and search again:** for a damaged file, the History page has a button that deletes the file in Sonarr/Radarr, monitors the movie or episodes again and searches for a new copy.
+
 ## 1.0.4
 
 - **Home Assistant:** an integration (install with HACS from this repository) with sensors for the savings, the queue, the kept originals and the GPU, a switch to pause the queue, buttons for *Start now* and deleting the kept originals, and a card in four variants (`full`, `compact`, `kept`, `gpu`) in Dutch or English. See the README.

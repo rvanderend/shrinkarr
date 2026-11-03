@@ -211,6 +211,30 @@ async def probe(path: str) -> dict:
     return json.loads(out)
 
 
+ZERO_BLOCK = 1 << 20
+
+
+def zero_blocks(path: str, samples: int | None = 64) -> tuple[int, int]:
+    """Counts 1 MB blocks that hold only zero bytes: (empty, checked).
+
+    Compressed video never has a whole MB of zeros; a file that does was never fully written
+    (an unfinished download) or is damaged. `samples` blocks are read, spread over the file;
+    None reads all of them.
+    """
+    n = -(-os.path.getsize(path) // ZERO_BLOCK)
+    picks = range(n) if samples is None or samples >= n else \
+        sorted({i * (n - 1) // (samples - 1) for i in range(samples)})
+    empty = checked = 0
+    with open(path, "rb") as f:
+        for i in picks:
+            f.seek(i * ZERO_BLOCK)
+            b = f.read(ZERO_BLOCK)
+            if b:
+                checked += 1
+                empty += not b.strip(b"\0")
+    return empty, checked
+
+
 def streams(p: dict, kind: str) -> list[dict]:
     res = [s for s in p.get("streams", []) if s.get("codec_type") == kind]
     if kind == "video":

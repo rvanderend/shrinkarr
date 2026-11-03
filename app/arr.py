@@ -257,6 +257,32 @@ async def rescan(kind: str, arr_id: int):
         await api("sonarr", "POST", "/command", json={"name": "RescanSeries", "seriesId": arr_id})
 
 
+async def redownload(kind: str, arr_id: int, file_id: int):
+    """Deletes a (damaged) file in Sonarr/Radarr and searches for it again.
+
+    The movie or episodes are monitored again first: deleting a file can unmonitor them, and
+    a later automatic search should also pick them up. A file that is already gone (a second try
+    after a failed search) is fine.
+    """
+    async def delete(app, path):
+        try:
+            await api(app, "DELETE", path)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
+
+    if kind == "movie":
+        await delete("radarr", f"/moviefile/{file_id}")
+        await api("radarr", "PUT", "/movie/editor", json={"movieIds": [arr_id], "monitored": True})
+        await api("radarr", "POST", "/command", json={"name": "MoviesSearch", "movieIds": [arr_id]})
+    else:
+        ids = [e["id"] for e in await api("sonarr", "GET", "/episode", params={"episodeFileId": file_id})]
+        await delete("sonarr", f"/episodefile/{file_id}")
+        if ids:
+            await api("sonarr", "PUT", "/episode/monitor", json={"episodeIds": ids, "monitored": True})
+            await api("sonarr", "POST", "/command", json={"name": "EpisodeSearch", "episodeIds": ids})
+
+
 # --- covers -----------------------------------------------------------------
 
 async def cover(app: str, item_id: int, kind: str) -> Path | None:

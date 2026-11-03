@@ -443,6 +443,28 @@ async def job_undo(job_id: int):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{job_id}/redownload")
+async def job_redownload(job_id: int):
+    """Deletes a damaged original in Sonarr/Radarr and searches for it again."""
+    from .i18n import tr
+    j = db.one("SELECT * FROM jobs WHERE id=?", (job_id,))
+    if not j or j["status"] != "failed" or j["stage"] != "damaged":
+        raise HTTPException(400, "not a damaged file")
+    app_name = "radarr" if j["kind"] == "movie" else "sonarr"
+    if not arr.configured(app_name):
+        raise HTTPException(400, f"{app_name} not configured")
+    try:
+        await arr.redownload(j["kind"], j["arr_id"], j["file_id"])
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"{app_name}: {e.response.status_code} {e.response.text[:200]}") from e
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"{app_name}: {e}") from e
+    db.update_job(job_id, status="redownload", stage="redownload",
+                  message=tr("redownload", app="Radarr" if j["kind"] == "movie" else "Sonarr"))
+    asyncio.create_task(arr.LIB.refresh_item("movie" if j["kind"] == "movie" else "series", j["arr_id"]))
+    return {"ok": True}
+
+
 @app.get("/api/kept")
 async def kept_list():
     """The kept originals: what is in the 'trash' and when it gets deleted."""

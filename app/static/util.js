@@ -76,6 +76,7 @@ export const I = {
   up: ic('<path d="m18 15-6-6-6 6"/>'),
   trash: ic('<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>'),
   retry: ic('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'),
+  download: ic('<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>'),
   refresh: ic('<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>'),
   select: ic('<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/>'),
   chev: ic('<path d="m9 18 6-6-6-6"/>'),

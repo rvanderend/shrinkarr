@@ -22,6 +22,10 @@ class Skip(Exception):
     """Not an error, but the original stays (for example too little gain)."""
 
 
+class Damaged(Exception):
+    """The source file is damaged: failed, with a button in the history to download it again."""
+
+
 class Cancelled(Exception):
     pass
 
@@ -148,6 +152,8 @@ class Worker:
             db.update_job(jid, status="cancelled", stage="cancelled", finished=time.time())
         except Skip as e:
             db.update_job(jid, status="skipped", stage="skipped", message=str(e), finished=time.time())
+        except Damaged as e:
+            db.update_job(jid, status="failed", stage="damaged", message=str(e), finished=time.time())
         except media.FFmpegError as e:
             if self.cancel_requested:
                 db.update_job(jid, status="cancelled", stage="cancelled", finished=time.time())
@@ -186,6 +192,10 @@ class Worker:
         if not writable(Path(src).parent):
             raise Skip(tr("read_only", folder=Path(src).parent))
         st = os.stat(src)
+        # A few seconds of reading instead of a whole conversion that fails the duration check.
+        empty, checked = await asyncio.to_thread(media.zero_blocks, src)
+        if empty:
+            raise Damaged(tr("damaged", empty=empty, checked=checked))
         p = await media.probe(src)
         if not media.streams(p, "video"):
             raise Skip(tr("no_video"))
@@ -270,6 +280,10 @@ class Worker:
             raise RuntimeError(tr("sub_count", got=n_subs, want=want_subs))
         odur = media.duration_of(op)
         if abs(odur - dur) > max(2.0, dur * 0.005):
+            # The samples may have missed a small hole: now read the whole original.
+            empty, checked = await asyncio.to_thread(media.zero_blocks, src, None)
+            if empty:
+                raise Damaged(tr("damaged", empty=empty, checked=checked))
             raise RuntimeError(tr("duration", got=odur, want=dur))
 
         # Learn for the next estimates

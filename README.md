@@ -85,8 +85,9 @@ Open `http://<container-ip>:8080` afterwards. The **setup wizard** takes you thr
 ## How it works
 
 1. The library comes from the Sonarr and Radarr API (media info per file). Posters are cached.
-2. A job encodes the video to HEVC in the work folder. Hardware decoding is used for H.264 and MPEG-2; other sources (MPEG-4/XviD, VC-1, 10-bit H.264, interlaced) are decoded in software, with deinterlacing where needed.
-3. The output is checked. The original **stays** when ffmpeg fails, the video isn't HEVC, an audio or subtitle track is missing, the duration differs by more than 2 s (or 0.5%), the gain is smaller than the minimum (15% by default), or the original changed in the meantime.
+2. Before encoding, Shrinkarr reads 64 blocks of 1 MB spread over the file (a few seconds). If one of them holds only zeros, the file was never fully downloaded or is damaged: the job fails with that message instead of after the whole encode, and the History page has a **Delete and search again** button that deletes the file in Sonarr/Radarr and searches for it again.
+   A job encodes the video to HEVC in the work folder. Hardware decoding is used for H.264 and MPEG-2; other sources (MPEG-4/XviD, VC-1, 10-bit H.264, interlaced) are decoded in software, with deinterlacing where needed.
+3. The output is checked. The original **stays** when ffmpeg fails, the video isn't HEVC, an audio or subtitle track is missing, the duration differs by more than 2 s (or 0.5%; then the whole original is checked for empty blocks too, so a damaged file gets the clear message), the gain is smaller than the minimum (15% by default), or the original changed in the meantime.
 4. The new file is copied next to the original as a hidden temporary file and then renamed over it. An `.mp4`/`.avi` becomes `.mkv` (the original is deleted then). The file gets the tag `SHRINKARR=<encoder> q<quality>`.
    With **Keep originals** on, the original is first moved to `<root folder>/.shrinkarr-originals/…` (a rename on the same disk, no copying; Sonarr, Radarr and Plex skip folders starting with a dot). The History page then has an **Undo** button until it is deleted after the chosen number of days.
 5. Sonarr/Radarr rescan the item, Plex rescans only that folder.
