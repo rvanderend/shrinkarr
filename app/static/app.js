@@ -454,7 +454,9 @@ function updateDetailBadges() {
 function renderDetail() {
   const { data: d, sel } = S.detail;
   const conv = d.files.filter((f) => f.convertible);
-  const chosen = d.files.filter((f) => sel.has(f.fileId));
+  // When everything left to convert is already queued or running, estimate those files instead of an empty selection.
+  const queuedOnly = conv.length > 0 && conv.every((f) => f.job);
+  const chosen = queuedOnly ? conv : d.files.filter((f) => sel.has(f.fileId));
   const size = chosen.reduce((s, f) => s + f.size, 0), est = chosen.reduce((s, f) => s + f.estSize, 0);
   const secs = chosen.reduce((s, f) => s + f.estSeconds, 0);
   const pct = savePct(size, est);
@@ -519,7 +521,8 @@ function renderDetail() {
         <div class="compare"><i style="width:${size ? Math.max(2, (est / size) * 100) : 0}%"></i></div>
         <div class="note">${d.sampled ? `${icon('flask', 15)} ${t('detail.sampled')}` : (S.lib?.learned ? t('detail.roughLearned') : t('detail.rough'))}</div>
         <div class="actions">
-          <button class="btn grad lg" id="go-btn" ${chosen.length ? '' : 'disabled'}>${I.shrink} ${t('common.shrink')}${isSeries ? ` (${chosen.length})` : ''}</button>
+          ${queuedOnly ? `<button class="btn lg" disabled>${conv.some((f) => f.job.status === 'running') ? t('detail.running') : t('detail.queued')}</button>`
+            : `<button class="btn grad lg" id="go-btn" ${chosen.length ? '' : 'disabled'}>${I.shrink} ${t('common.shrink')}${isSeries ? ` (${chosen.length})` : ''}</button>`}
           <button class="btn lg" id="sample-btn" title="${t('detail.sampleTitle')}">${I.flask} ${t('detail.sample')}</button>
         </div>
       </div>` : `<div class="banner info">${icon('check', 18)} ${isSeries ? t('detail.allEfficientSeries') : t('detail.allEfficientMovie')}</div>`}

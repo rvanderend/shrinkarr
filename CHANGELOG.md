@@ -4,6 +4,7 @@
 
 - **Move to the top** now also works for an automatic job: it becomes a manual job, so its time window and delay no longer hold it back (before, the worker skipped it and started the next manual job). An automatic job at the top keeps the button for this.
 - When the new version is larger than the original, the job message now says so (*The new version was 55% larger*) instead of *Too little gain (-55%, at least 15%)*.
+- The estimate of a movie (or series) that is already queued or being converted showed 0 kB and 0%, because only files without a job are selected. It now shows the estimate for the queued files, and *Already in the queue* or *Being converted now* in place of the disabled *Shrink* button.
 - Queue: the first row no longer shifts to the right because it has no *Move to the top* button.
 
 ## 1.0.5
