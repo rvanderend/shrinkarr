@@ -304,6 +304,8 @@ class Worker:
         saved_pct = (1 - new_size / st.st_size) * 100
         # Converting only the audio is about playback, not space: the minimum savings don't apply.
         if not audio_only and saved_pct < s["min_savings"]:
+            if saved_pct < 0:
+                raise Skip(tr("grew", pct=-saved_pct))
             raise Skip(tr("too_little", pct=saved_pct, min=s["min_savings"]))
 
         # 5. Don't replace while someone is watching this file in Plex

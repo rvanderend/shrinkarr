@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Move to the top** now also works for an automatic job: it becomes a manual job, so its time window and delay no longer hold it back (before, the worker skipped it and started the next manual job). An automatic job at the top keeps the button for this.
+- When the new version is larger than the original, the job message now says so (*The new version was 55% larger*) instead of *Too little gain (-55%, at least 15%)*.
 - Queue: the first row no longer shifts to the right because it has no *Move to the top* button.
 
 ## 1.0.5
