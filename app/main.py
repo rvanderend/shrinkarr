@@ -24,9 +24,10 @@ STATIC = Path(__file__).parent / "static"
 
 
 async def _refresh_loop():
+    # After a failed load (Sonarr/Radarr still starting after a reboot) try again soon, not in 15 minutes.
     while True:
         await arr.LIB.refresh()
-        await asyncio.sleep(15 * 60)
+        await asyncio.sleep(30 if arr.LIB.error else 15 * 60)
 
 
 @asynccontextmanager
