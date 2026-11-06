@@ -44,7 +44,8 @@ async def scan():
     STATE.update(busy=True, stage="scan", done=0, items=[], errors=[])
     try:
         rows = db.q("SELECT id, kind, arr_id, file_id, title, subtitle, path FROM jobs WHERE status='done' ORDER BY finished")
-        seen, jobs = set(), []
+        # A file that is in the queue again keeps its name: the job would no longer find it.
+        seen, jobs = {r["path"] for r in db.q("SELECT path FROM jobs WHERE status IN ('queued','running')")}, []
         for j in reversed(rows):  # the newest job for a path counts
             if j["path"] not in seen and os.path.exists(j["path"]):
                 seen.add(j["path"])
@@ -89,6 +90,8 @@ async def _rename(i: dict):
     src, final = Path(i["path"]), Path(i["new_path"])
     if not src.exists() or final.exists():
         raise RuntimeError("the file changed since the scan")
+    if db.one("SELECT id FROM jobs WHERE path=? AND status IN ('queued','running')", (str(src),)):
+        raise RuntimeError("the file is in the queue")
     state, has_arr = None, arr.configured("radarr" if i["kind"] == "movie" else "sonarr")
     if has_arr:
         file_id = await arr.find_file(i["kind"], i["arr_id"], str(src)) or i["file_id"]
