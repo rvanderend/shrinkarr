@@ -65,7 +65,7 @@ def conn() -> sqlite3.Connection:
             _conn.execute("ALTER TABLE jobs ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
         if "not_before" not in cols:
             _conn.execute("ALTER TABLE jobs ADD COLUMN not_before REAL")
-        for col in ("kept_path TEXT", "kept_until REAL", "orig_path TEXT"):
+        for col in ("kept_path TEXT", "kept_until REAL", "orig_path TEXT", "renamed TEXT"):
             if col.split()[0] not in cols:
                 _conn.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
         if "encoder" not in {r[1] for r in _conn.execute("PRAGMA table_info(observations)")}:

@@ -1,5 +1,6 @@
 """Shrinkarr: shrink movies and series from Sonarr/Radarr by re-encoding them to HEVC on the GPU."""
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -14,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import arr, auth, auto, config, db, encoders, gpu, media
+from . import arr, auth, auto, config, db, encoders, gpu, media, rename
 from .worker import WORKER, in_window, writable
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -418,6 +419,10 @@ async def job_undo(job_id: int):
     if not kept.exists():
         db.update_job(job_id, kept_path=None)
         raise HTTPException(410, tr("kept_gone"))
+    app_name = "radarr" if j["kind"] == "movie" else "sonarr"
+    state = None
+    if orig != new and arr.configured(app_name):
+        state = await arr.file_state(j["kind"], j["arr_id"], j["file_id"])
     if orig == new:
         os.replace(kept, orig)
     else:
@@ -429,9 +434,21 @@ async def job_undo(job_id: int):
         if d.name == ".shrinkarr-originals":
             break
         d = d.parent
+    for old_p, new_p in reversed(json.loads(j.get("renamed") or "[]")):  # subtitles etc. renamed along
+        if os.path.exists(new_p) and not os.path.exists(old_p):
+            try:
+                os.rename(new_p, old_p)
+            except OSError as e:
+                log.warning("Could not rename %s back: %s", new_p, e)
     db.update_job(job_id, status="reverted", stage="reverted", message=tr("reverted"), kept_path=None, path=str(orig))
     try:
-        await arr.rescan(j["kind"], j["arr_id"])
+        if state:  # the same order as after a conversion, so Radarr doesn't unmonitor the movie
+            if new_id := await arr.repoint(j["kind"], j["arr_id"], state, str(orig)):
+                db.update_job(job_id, file_id=new_id)
+        cmd = await arr.rescan(j["kind"], j["arr_id"])
+        if state:
+            await arr.wait_command(app_name, cmd)
+            await arr.restore_monitored(j["kind"], state)
         await arr.plex_refresh(str(orig))
     except Exception:  # noqa: BLE001
         log.warning("Rescan after undo failed for job %s", job_id)
@@ -462,6 +479,37 @@ async def job_redownload(job_id: int):
     db.update_job(job_id, status="redownload", stage="redownload",
                   message=tr("redownload", app="Radarr" if j["kind"] == "movie" else "Sonarr"))
     asyncio.create_task(arr.LIB.refresh_item("movie" if j["kind"] == "movie" else "series", j["arr_id"]))
+    return {"ok": True}
+
+
+class RenameIds(BaseModel):
+    ids: list[int]
+
+
+@app.get("/api/rename")
+async def rename_get():
+    """Files converted earlier whose name would get the new codec words (after a scan)."""
+    st = rename.STATE
+    return {**{k: st[k] for k in ("busy", "stage", "done", "total", "errors")},
+            "items": [{"id": i["id"], "title": i["title"], "subtitle": i["subtitle"],
+                       "old": Path(i["path"]).name, "new": Path(i["new_path"]).name} for i in st["items"]]}
+
+
+@app.post("/api/rename/scan")
+async def rename_scan():
+    if rename.STATE["busy"]:
+        raise HTTPException(409, "busy")
+    rename.STATE["busy"] = True
+    asyncio.create_task(rename.scan())
+    return {"ok": True}
+
+
+@app.post("/api/rename/apply")
+async def rename_apply(body: RenameIds):
+    if rename.STATE["busy"]:
+        raise HTTPException(409, "busy")
+    rename.STATE["busy"] = True
+    asyncio.create_task(rename.apply(body.ids))
     return {"ok": True}
 
 

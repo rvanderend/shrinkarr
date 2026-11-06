@@ -353,6 +353,9 @@ export async function renderSettings(S) {
         <div id="kept-body"></div>
         <h4>${t('set.dts')}</h4><p class="help">${t('set.dtsHelp')}</p>
         <div class="srow">${sw('dts-on', s.dts_to_eac3, t('set.on'))}</div>
+        <h4>${t('set.rename')}</h4><p class="help">${t('set.renameHelp')}</p>
+        <div class="srow">${sw('rename-on', s.rename_codec, t('set.on'))}</div>
+        <div id="rename-body" style="margin-top:8px"></div>
         <h4>${t('set.langs')}</h4><p class="help">${t('set.langsHelp')}</p>
         <div style="display:grid;gap:10px;max-width:480px">
           <div class="ff"><span class="ff-l">${t('set.langsKeep')}</span>
@@ -457,6 +460,37 @@ export async function renderSettings(S) {
   };
   renderKept();
   $('#dts-on').onchange = async (e) => { await save({ dts_to_eac3: e.target.checked }); S.lib = null; };
+  $('#rename-on').onchange = (e) => save({ rename_codec: e.target.checked });
+  // Files converted before the option was on: scan, show what changes, rename after a confirm.
+  const renderRename = async () => {
+    const el = $('#rename-body'); if (!el) return;
+    const r = await api('/api/rename').catch(() => null); if (!r) return;
+    const errs = r.errors.length ? `<details class="kept-list"><summary>${t('set.renameErrors', { n: r.errors.length })}</summary>${r.errors.map((x) => `<div class="kept-row"><span class="t muted">${esc(x)}</span></div>`).join('')}</details>` : '';
+    if (r.busy) {
+      el.innerHTML = `<p class="help" style="margin:0">${t(r.stage === 'apply' ? 'set.renameApplying' : 'set.renameScanning', { done: r.done, total: r.total })}</p>`;
+      setTimeout(() => { if (document.body.contains(el)) renderRename(); }, 2000);
+      return;
+    }
+    const scanBtn = `<button class="btn sm" id="rename-scan">${t(r.stage ? 'set.renameRescan' : 'set.renameScan')}</button>`;
+    if (!r.stage) { el.innerHTML = `<div class="srow">${scanBtn}<span class="muted">${t('set.renameScanHelp')}</span></div>`; }
+    else if (!r.items.length) { el.innerHTML = `<div class="srow">${scanBtn}<span class="muted">${t(r.stage === 'applied' ? 'set.renameDone' : 'set.renameNone')}</span></div>${errs}`; }
+    else {
+      el.innerHTML = `<div class="srow kept-sum"><span>${t('set.renameFound', { n: r.items.length })}</span>
+          <button class="btn sm primary" id="rename-apply">${t('set.renameApply', { n: r.items.length })}</button>${scanBtn}</div>
+        <details class="kept-list"><summary>${t('set.keptShow')}</summary>${r.items.map((i) => `
+          <div class="kept-row"><span class="t"><span class="muted">${esc(i.old)}</span><br>→ ${esc(i.new)}</span></div>`).join('')}</details>${errs}`;
+      $('#rename-apply').onclick = async () => {
+        if (!confirm(t('set.renameConfirm', { n: r.items.length }))) return;
+        try { await post('/api/rename/apply', { ids: r.items.map((i) => i.id) }); } catch (e) { toast(e.message, 'bad'); }
+        renderRename();
+      };
+    }
+    $('#rename-scan').onclick = async () => {
+      try { await post('/api/rename/scan'); } catch (e) { toast(e.message, 'bad'); }
+      renderRename();
+    };
+  };
+  renderRename();
   const list = (v) => v.split(',').map((x) => x.trim()).filter(Boolean);
   let keepLangs = [...(s.audio_keep_languages || [])];
   const setLangs = async (codes) => {

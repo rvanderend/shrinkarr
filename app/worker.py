@@ -4,6 +4,7 @@
 """
 import asyncio
 import errno
+import json
 import logging
 import os
 import shutil
@@ -12,7 +13,7 @@ from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
-from . import arr, config, db, encoders, media
+from . import arr, config, db, encoders, media, naming
 from .i18n import tr
 
 log = logging.getLogger("shrinkarr.worker")
@@ -84,6 +85,31 @@ def _keep(kind: str, src: str) -> Path:
         dest.parent.mkdir(parents=True, exist_ok=True)
         os.rename(src, dest)
     return dest
+
+
+async def update_arr(kind: str, arr_id: int, state: dict | None, final: Path) -> tuple[int | None, list[str]]:
+    """After a replace: tell Sonarr/Radarr about the file. With `state` (the file got a new path) the new
+    file is imported first and monitoring is checked after the rescan; see arr.repoint.
+    Returns the id of the new file record (or None) and notes for the job message."""
+    notes, new_id = [], None
+    app_name = "Radarr" if kind == "movie" else "Sonarr"
+    if state:
+        try:
+            new_id = await arr.repoint(kind, arr_id, state, str(final))
+            if not new_id:
+                notes.append(tr("repoint_failed", app=app_name, err=tr("repoint_nofile")))
+        except Exception as e:  # noqa: BLE001
+            notes.append(tr("repoint_failed", app=app_name, err=e))
+    try:
+        cmd = await arr.rescan(kind, arr_id)
+        if state:
+            await arr.wait_command(app_name.lower(), cmd)
+            if n := await arr.restore_monitored(kind, state):
+                log.warning("%s unmonitored %d item(s) after the new path of %s; monitored again", app_name, n, final)
+                notes.append(tr("remonitored", app=app_name, n=n))
+    except Exception as e:  # noqa: BLE001
+        notes.append(tr("rescan_failed", app=app_name, err=e))
+    return new_id, notes
 
 
 class Worker:
@@ -315,9 +341,22 @@ class Worker:
         if (st2.st_size, st2.st_mtime) != (st.st_size, st.st_mtime):
             raise Skip(tr("changed"))
         folder = Path(src).parent
-        final = folder / (Path(src).stem + ".mkv")
+        stem = Path(src).stem
+        if s["rename_codec"]:
+            new = [oa[i] for i in plan["convert"]]
+            stem = naming.new_stem(stem, video=not audio_only,
+                                   dts=bool(new) and not any(a.get("codec_name") == "dts" for a in oa),
+                                   channels=max((int(a.get("channels") or 2) for a in new), default=6))
+            if stem != Path(src).stem and (folder / (stem + ".mkv")).exists():
+                log.warning("%s already exists; keeping the old name", stem + ".mkv")
+                stem = Path(src).stem
+        final = folder / (stem + ".mkv")
         if final != Path(src) and final.exists():
             raise RuntimeError(tr("exists", name=final.name))
+        # A new path: read what Sonarr/Radarr know about the file now, to tell them about the new one later.
+        state = None
+        if final != Path(src) and arr.configured("radarr" if job["kind"] == "movie" else "sonarr"):
+            state = await arr.file_state(job["kind"], job["arr_id"], job["file_id"])
         if shutil.disk_usage(folder).free < new_size + 1e9:
             raise RuntimeError(tr("no_space_nas"))
         tmp = folder / f".{final.stem}.shrinkarr-tmp"
@@ -345,14 +384,14 @@ class Worker:
         if final != Path(src) and not kept:
             os.unlink(src)
         log.info("Replaced: %s (%d -> %d bytes)%s", final, st.st_size, new_size, f"; original kept in {kept}" if kept else "")
+        renamed = naming.rename_sidecars(Path(src), final) if final.stem != Path(src).stem else []
 
         # 7. Update Sonarr/Radarr and Plex
         db.update_job(jid, stage="update", path=str(final), size_after=new_size)
-        notes = []
-        try:
-            await arr.rescan(job["kind"], job["arr_id"])
-        except Exception as e:  # noqa: BLE001
-            notes.append(tr("rescan_failed", app="Radarr" if job["kind"] == "movie" else "Sonarr", err=e))
+        extra = {}
+        new_id, notes = await update_arr(job["kind"], job["arr_id"], state, final)
+        if new_id:
+            extra["file_id"] = new_id
         try:
             if arr.plex_configured() and not await arr.plex_refresh(str(final)):
                 notes.append(tr("plex_nomatch", path=str(Path(arr.to_plex(str(final))).parent)))
@@ -363,8 +402,12 @@ class Worker:
             (tr("plus_eac3", n=len(plan["convert"])) if plan["convert"] else "") + \
             (tr("plus_dropped", n=len(plan["dropped"]), list=", ".join(
                 media.track_label(s) for s in plan["dropped"])) if plan["dropped"] else "") + \
+            (tr("plus_renamed", name=final.name) if final.stem != Path(src).stem else "") + \
             ("; " + "; ".join(notes) if notes else "")
-        extra = {"kept_path": str(kept), "kept_until": time.time() + keep_days * 86400, "orig_path": src} if kept else {}
+        if kept:
+            extra.update(kept_path=str(kept), kept_until=time.time() + keep_days * 86400, orig_path=src)
+        if renamed:
+            extra["renamed"] = json.dumps(renamed)
         return {"size_after": new_size, "message": msg, "path": str(final), **extra}
 
     async def _wait_for_viewers(self, jid: int, src: str):
