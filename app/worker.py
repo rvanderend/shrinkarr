@@ -229,10 +229,13 @@ class Worker:
         dts = bool(db.get_settings()["dts_to_eac3"])
         rules = media.audio_rules(db.get_settings())
         plan = media.plan_streams(p, dts, rules)
-        # Video already efficient: only the audio, if there is DTS to convert.
-        audio_only = vi["codec"] in media.EFFICIENT
+        # Video already efficient: only the audio, if there is DTS to convert. A forced job re-encodes it anyway.
+        audio_only = vi["codec"] in media.EFFICIENT and not job["force"]
         if audio_only and not plan["convert"]:
             raise Skip(tr("already", codec=vi["codec"].upper()))
+        # Dolby Vision is dropped when re-encoding. Profile 5 has no HDR10/SDR base layer: its colours would be wrong.
+        if not audio_only and vi["dv"] and vi["dv"]["compat"] == 0:
+            raise Skip(tr("dv_no_base", profile=vi["dv"]["profile"]))
         if plan["unsupported_subs"]:
             raise Skip(tr("bad_subs", codecs=", ".join(plan["unsupported_subs"])))
         dur = media.duration_of(p)

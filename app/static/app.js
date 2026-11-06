@@ -525,7 +525,8 @@ function renderDetail() {
             : `<button class="btn grad lg" id="go-btn" ${chosen.length ? '' : 'disabled'}>${I.shrink} ${t('common.shrink')}${isSeries ? ` (${chosen.length})` : ''}</button>`}
           <button class="btn lg" id="sample-btn" title="${t('detail.sampleTitle')}">${I.flask} ${t('detail.sample')}</button>
         </div>
-      </div>` : `<div class="banner info">${icon('check', 18)} ${isSeries ? t('detail.allEfficientSeries') : t('detail.allEfficientMovie')}</div>`}
+      </div>` : `<div class="banner info">${icon('check', 18)} ${isSeries ? t('detail.allEfficientSeries') : t('detail.allEfficientMovie')}
+        ${!isSeries && d.files[0] && !d.files[0].job ? `<button class="btn sm" id="force-btn" title="${t('detail.forceTitle')}">${I.shrink} ${t('detail.force')}</button>` : ''}</div>`}
       ${filesHtml}
       ${hist}
     </div>`;
@@ -545,6 +546,17 @@ function renderDetail() {
       await pollJobs();
       openDetail(d.kind, d.id, d.preset);
       loadLibrary().then(updateGrid);
+    } catch (err) { toast(err.message, 'bad'); }
+  });
+  $('#force-btn')?.addEventListener('click', async (e) => {
+    if (!confirm(t('detail.forceConfirm', { preset: presetLabel(d.preset) }))) return;
+    e.currentTarget.disabled = true;
+    try {
+      const r = await post('/api/jobs', { items: [{ kind: d.kind, id: d.id }], preset: d.preset, force: true });
+      toast(t('toast.added', { n: r.added }), 'good');
+      if (r.readOnly) toast(t('toast.readOnly', { n: r.readOnly }), 'bad');
+      await pollJobs();
+      openDetail(d.kind, d.id, d.preset);
     } catch (err) { toast(err.message, 'bad'); }
   });
   $('#sample-btn')?.addEventListener('click', async (e) => {
