@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Codec in the file name** (Settings → Encoding, off by default): a converted file gets the words for what changed, in the style of its name: `x264` → `x265`, `H.264` → `H.265`, `AVC` → `HEVC`, and `DTS…` → `DDP5.1` when every DTS track became E-AC3. Title, quality, source and release group stay, and a name without such a word stays as it is. Subtitles, `.nfo` and artwork with the same name are renamed along, and *Undo* puts them back. (#16)
+- **Earlier conversions:** under the same option, *Check earlier conversions* lists the converted files whose name would change, read from the `SHRINKARR` tag in each file (so the same rules apply), and renames them after a confirm, the same way as after a conversion. (#16)
+- **New path, same monitoring:** when a file gets a new path (a new name, or `.avi`/`.mp4` → `.mkv`), Sonarr/Radarr first get the new file through a manual import with the quality, languages and release group of the old one, and only then a rescan. Before, the rescan dropped the old file as *missing from disk* while the movie still pointed to it, and Radarr with *Unmonitor deleted movies* on unmonitored the movie. If that still happens, Shrinkarr monitors it again. *Undo* uses the same order. (#16)
 - **Move to the top** now also works for an automatic job: it becomes a manual job, so its time window and delay no longer hold it back (before, the worker skipped it and started the next manual job). An automatic job at the top keeps the button for this.
 - When the new version is larger than the original, the job message now says so (*The new version was 55% larger*) instead of *Too little gain (-55%, at least 15%)*.
 - The estimate of a movie (or series) that is already queued or being converted showed 0 kB and 0%, because only files without a job are selected. It now shows the estimate for the queued files, and *Already in the queue* or *Being converted now* in place of the disabled *Shrink* button.

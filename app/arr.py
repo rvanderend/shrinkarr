@@ -74,6 +74,11 @@ def to_local(arr_path: str) -> str:
     return _swap(arr_path, [(m["arr"], m["local"]) for m in _mappings()]) or arr_path
 
 
+def to_arr(local_path: str) -> str:
+    """Path in this container -> path in Sonarr/Radarr."""
+    return _swap(local_path, [(m["local"], m["arr"]) for m in _mappings()]) or local_path
+
+
 def to_plex(local_path: str) -> str:
     return _swap(local_path, [(m["local"], m.get("plex") or m["local"]) for m in _mappings()]) or local_path
 
@@ -250,11 +255,94 @@ async def resolve_file(kind: str, file_id: int) -> dict | None:
         raise
 
 
-async def rescan(kind: str, arr_id: int):
+async def rescan(kind: str, arr_id: int) -> dict | None:
     if kind == "movie":
-        await api("radarr", "POST", "/command", json={"name": "RescanMovie", "movieId": arr_id})
+        return await api("radarr", "POST", "/command", json={"name": "RescanMovie", "movieId": arr_id})
+    return await api("sonarr", "POST", "/command", json={"name": "RescanSeries", "seriesId": arr_id})
+
+
+async def wait_command(app: str, cmd: dict | None, timeout: float = 300) -> str:
+    """Waits until a Sonarr/Radarr command has finished; returns its status ('completed', 'failed', ...)."""
+    if not cmd or "id" not in cmd:
+        return "unknown"
+    end = time.monotonic() + timeout
+    status = cmd.get("status") or "queued"
+    while status in ("queued", "started") and time.monotonic() < end:
+        await asyncio.sleep(2)
+        status = (await api(app, "GET", f"/command/{cmd['id']}")).get("status") or "unknown"
+    return status
+
+
+async def find_file(kind: str, arr_id: int, local_path: str) -> int | None:
+    """Id of the file record in Sonarr/Radarr for this path (an id stored earlier can be outdated)."""
+    path = to_arr(local_path)
+    if kind == "movie":
+        files = await api("radarr", "GET", "/moviefile", params={"movieId": arr_id})
     else:
-        await api("sonarr", "POST", "/command", json={"name": "RescanSeries", "seriesId": arr_id})
+        files = await api("sonarr", "GET", "/episodefile", params={"seriesId": arr_id})
+    return next((f["id"] for f in files or [] if f.get("path") == path), None)
+
+
+async def file_state(kind: str, arr_id: int, file_id: int) -> dict | None:
+    """What Sonarr/Radarr know about a file before Shrinkarr gives it a new path: the file record and
+    which movie or episodes are monitored. None when that can't be read (then only a rescan follows)."""
+    try:
+        f = await resolve_file(kind, file_id)
+        if not f:
+            return None
+        if kind == "movie":
+            movie = await api("radarr", "GET", f"/movie/{arr_id}")
+            return {"file": f, "monitored": {arr_id: bool(movie.get("monitored"))}}
+        eps = await api("sonarr", "GET", "/episode", params={"episodeFileId": file_id})
+        return {"file": f, "monitored": {e["id"]: bool(e.get("monitored")) for e in eps}}
+    except Exception as e:  # noqa: BLE001
+        log.warning("Could not read file %s in %s: %s", file_id, "Radarr" if kind == "movie" else "Sonarr", e)
+        return None
+
+
+async def repoint(kind: str, arr_id: int, state: dict, new_local: str) -> int | None:
+    """Tells Sonarr/Radarr that `new_local` is now the file of this movie or these episodes.
+
+    After a new name, a rescan alone first drops the old file record as 'missing from disk' while the
+    movie still points to it, and Radarr then unmonitors the movie ('Unmonitor deleted movies'). So the
+    new file is imported first, with the quality, languages and release group of the old record. It is
+    already in the movie or series folder, so Sonarr/Radarr treat it as an existing file: nothing is moved
+    and no download or upgrade notifications go out. The rescan that follows cleans up the old record,
+    which nothing points to any more. Returns the id of the new file record, or None.
+    """
+    app = "radarr" if kind == "movie" else "sonarr"
+    old = state["file"]
+    path = to_arr(new_local)
+    entry = {"path": path, "quality": old["quality"], "languages": old.get("languages") or [],
+             "releaseGroup": old.get("releaseGroup") or "", "indexerFlags": old.get("indexerFlags") or 0}
+    if kind == "movie":
+        entry["movieId"] = arr_id
+    else:
+        entry.update(seriesId=arr_id, episodeIds=list(state["monitored"]))
+        if not entry["episodeIds"]:
+            return None
+    cmd = await api(app, "POST", "/command", json={"name": "ManualImport", "importMode": "auto", "files": [entry]})
+    status = await wait_command(app, cmd)
+    if status != "completed":
+        log.warning("Import of %s in %s ended as %s", path, app, status)
+    return await find_file(kind, arr_id, new_local)
+
+
+async def restore_monitored(kind: str, state: dict) -> int:
+    """Monitors again what was monitored before (a safety net if the import didn't take). Returns how many."""
+    ids = [i for i, on in state["monitored"].items() if on]
+    if not ids:
+        return 0
+    if kind == "movie":
+        now = {m: bool((await api("radarr", "GET", f"/movie/{m}")).get("monitored")) for m in ids}
+        lost = [m for m, on in now.items() if not on]
+        if lost:
+            await api("radarr", "PUT", "/movie/editor", json={"movieIds": lost, "monitored": True})
+    else:
+        lost = [i for i in ids if not (await api("sonarr", "GET", f"/episode/{i}")).get("monitored")]
+        if lost:
+            await api("sonarr", "PUT", "/episode/monitor", json={"episodeIds": lost, "monitored": True})
+    return len(lost)
 
 
 async def redownload(kind: str, arr_id: int, file_id: int):
