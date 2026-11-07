@@ -314,6 +314,7 @@ class EnqueueItem(BaseModel):
 class EnqueueReq(BaseModel):
     items: list[EnqueueItem]
     preset: str | None = None
+    force: bool = False   # also files whose video is already efficient (HEVC/AV1), e.g. a high-bitrate remux
 
 
 @app.post("/api/jobs")
@@ -329,16 +330,17 @@ async def enqueue(req: EnqueueReq):
         for f in it["files"]:
             if ref.fileIds is not None and f["fileId"] not in ref.fileIds:
                 continue
-            if not media.needs_work(f) or db.active_job_for(f["kind"], f["fileId"]):
+            if (not media.needs_work(f) and not req.force) or db.active_job_for(f["kind"], f["fileId"]):
                 continue
             if not writable(Path(f["path"]).parent):
                 read_only += 1
                 continue
-            e = media.estimate(f, f["size"], preset, model, sample)
+            e = media.estimate(f, f["size"], preset, model, sample, force=req.force)
             title = f"{it['title']} ({it['year']})" if it["kind"] == "movie" and it.get("year") else it["title"]
             db.add_job(kind=f["kind"], arr_id=it["id"], file_id=f["fileId"], title=title,
                        subtitle=f["label"] if f["kind"] == "episode" else f["quality"], path=f["path"],
-                       preset=preset, size_before=f["size"], est_size=e["size"], est_seconds=e["seconds"])
+                       preset=preset, size_before=f["size"], est_size=e["size"], est_seconds=e["seconds"],
+                       force=int(req.force and f["efficient"]))
             added += 1
     WORKER.wake.set()
     return {"added": added, "readOnly": read_only}
@@ -346,7 +348,7 @@ async def enqueue(req: EnqueueReq):
 
 JOB_COLS = ("id, kind, arr_id, file_id, title, subtitle, path, preset, status, stage, progress, fps, speed, eta, "
             "cur_size, size_before, size_after, est_size, est_seconds, message, position, created, started, finished, "
-            "source, not_before, kept_path, kept_until")
+            "source, not_before, kept_path, kept_until, force")
 
 
 @app.get("/api/jobs")

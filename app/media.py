@@ -14,7 +14,7 @@ EFFICIENT = {"hevc", "av1", "vp9", "vvc"}
 MKV_SUBS = {"subrip", "ass", "ssa", "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "webvtt", "text"}
 CONVERT_SUBS = {"mov_text": "srt"}
 
-CODEC_FACTOR = {"h264": 1.0, "mpeg2video": 0.6, "vc1": 0.75, "mpeg4": 0.8}
+CODEC_FACTOR = {"h264": 1.0, "mpeg2video": 0.6, "vc1": 0.75, "mpeg4": 0.8, "hevc": 0.8}  # hevc: only when forced
 COPY_SPEED = 90e6  # bytes/s from /work to the media storage
 
 
@@ -171,8 +171,11 @@ class Model:
         return self.fps.get(bkt, encoders.DEFAULT_FPS.get(self.encoder, encoders.DEFAULT_FPS["qsv"])[bkt])
 
 
-def estimate(f: dict, size: int, preset: str, model: Model, sample: dict | None = None) -> dict:
-    """Estimated size and conversion time of one file."""
+def estimate(f: dict, size: int, preset: str, model: Model, sample: dict | None = None,
+             force: bool = False) -> dict:
+    """Estimated size and conversion time of one file. force: also re-encode video that is already efficient."""
+    if force and f["efficient"]:
+        f = {**f, "efficient": False}
     audio = audio_work(f)
     if f["duration"] <= 0 or not needs_work(f):
         return {"size": size, "seconds": 0, "convertible": False}
@@ -289,7 +292,17 @@ def video_info(p: dict) -> dict:
         "fps": fps if 1 < fps < 200 else 24.0,
         "closed_captions": bool(v.get("closed_captions")),
         "pix_fmt": pix,
+        "dv": dovi(v),
     }
+
+
+def dovi(v: dict) -> dict | None:
+    """Dolby Vision configuration of a video stream, or None."""
+    for sd in v.get("side_data_list") or []:
+        if "dv_profile" in sd:
+            return {"profile": int(sd.get("dv_profile") or 0),
+                    "compat": int(sd.get("dv_bl_signal_compatibility_id") or 0)}
+    return None
 
 
 # --- ffmpeg commands ------------------------------------------------------------
