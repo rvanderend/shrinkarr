@@ -1,5 +1,6 @@
 """SQLite: jobs, settings and measurements for the estimates."""
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -45,6 +46,18 @@ CREATE TABLE IF NOT EXISTS observations (
     ratio REAL, fps REAL, source TEXT NOT NULL, created REAL NOT NULL,
     encoder TEXT NOT NULL DEFAULT 'qsv'
 );
+-- What an attempt found out about a file, so it doesn't count as "to do" again: kept apart from the
+-- jobs, which can be cleared from the history.
+CREATE TABLE IF NOT EXISTS outcomes (
+    kind TEXT NOT NULL,            -- movie | episode
+    file_id INTEGER NOT NULL,      -- movieFileId of episodeFileId
+    size INTEGER NOT NULL,         -- the size then: another size is another file
+    preset TEXT NOT NULL,
+    result TEXT NOT NULL,          -- no_gain | damaged
+    size_after INTEGER,            -- size of the new version (no_gain)
+    created REAL NOT NULL,
+    PRIMARY KEY (kind, file_id)
+);
 CREATE TABLE IF NOT EXISTS samples (
     key TEXT PRIMARY KEY,          -- kind:id:preset
     ratio REAL NOT NULL, fps REAL NOT NULL, created REAL NOT NULL
@@ -71,6 +84,7 @@ def conn() -> sqlite3.Connection:
         if "encoder" not in {r[1] for r in _conn.execute("PRAGMA table_info(observations)")}:
             _conn.execute("ALTER TABLE observations ADD COLUMN encoder TEXT NOT NULL DEFAULT 'qsv'")
         _migrate(_conn)
+        _backfill_outcomes(_conn)
         # Jobs that were running when the service stopped go back into the queue.
         _conn.execute("UPDATE jobs SET status='queued', stage='', progress=0 WHERE status='running'")
     return _conn
@@ -92,6 +106,29 @@ def _migrate(c: sqlite3.Connection):
     if (legacy.get("sonarr_url") or legacy.get("radarr_url")) and "setup_done" not in have:
         c.execute("INSERT INTO settings(key, value) VALUES('setup_done', 'true')")
     c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('_migrated_env', 'true')")
+
+
+def _backfill_outcomes(c: sqlite3.Connection):
+    """Outcomes of jobs from before this table, once: read from their messages (in either language)."""
+    if c.execute("SELECT 1 FROM settings WHERE key='_outcomes_backfilled'").fetchone():
+        return
+    for j in c.execute("SELECT kind, file_id, size_before, preset, status, stage, message, finished FROM jobs "
+                       "WHERE status IN ('skipped','failed') ORDER BY id").fetchall():
+        msg, size_after = j["message"] or "", None
+        if j["status"] == "failed":
+            if j["stage"] != "damaged":
+                continue
+            result = "damaged"
+        elif m := re.match(r"(?:Too little gain|Te weinig winst) \((-?\d+)%", msg):
+            result, size_after = "no_gain", int(j["size_before"] * (1 - int(m[1]) / 100))
+        elif m := re.match(r"(?:The new version was|Nieuwe versie werd) (\d+)% (?:larger|groter)", msg):
+            result, size_after = "no_gain", int(j["size_before"] * (1 + int(m[1]) / 100))
+        else:
+            continue
+        c.execute("INSERT OR REPLACE INTO outcomes(kind, file_id, size, preset, result, size_after, created) "
+                  "VALUES(?,?,?,?,?,?,?)", (j["kind"], j["file_id"], j["size_before"], j["preset"], result,
+                                            size_after, j["finished"] or time.time()))
+    c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('_outcomes_backfilled', 'true')")
 
 
 def q(sql: str, args=()) -> list[dict]:
@@ -171,6 +208,16 @@ def add_job(**f) -> int:
 
 def active_job_for(kind: str, file_id: int) -> dict | None:
     return one("SELECT * FROM jobs WHERE kind=? AND file_id=? AND status IN ('queued','running')", (kind, file_id))
+
+
+def set_outcome(job: dict, result: str, size_after: int | None = None):
+    exec("INSERT OR REPLACE INTO outcomes(kind, file_id, size, preset, result, size_after, created) "
+         "VALUES(?,?,?,?,?,?,?)",
+         (job["kind"], job["file_id"], job["size_before"], job["preset"], result, size_after, time.time()))
+
+
+def outcomes() -> dict[tuple, dict]:
+    return {(r["kind"], r["file_id"]): r for r in q("SELECT * FROM outcomes")}
 
 
 # --- measurements for the estimates ----------------------------------------

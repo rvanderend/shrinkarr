@@ -89,6 +89,7 @@ async def consider(app: str, arr_id: int, *, file_id: int | None = None, path: s
     f = next((x for x in item["files"] if (file_id and x["fileId"] == file_id) or (path and x["path"] == path)), None)
     if not f:
         return tr("auto_no_file")
+    preset = s["auto_preset"] if s["auto_preset"] in config.PRESETS else "balanced"
     reason = None
     if not (s["auto_movies"] if kind == "movie" else s["auto_series"]):
         reason = tr("auto_kind_off")
@@ -106,10 +107,11 @@ async def consider(app: str, arr_id: int, *, file_id: int | None = None, path: s
     elif db.one("SELECT id FROM jobs WHERE kind=? AND file_id=? AND source='auto' AND created>?",
                 (f["kind"], f["fileId"], time.time() - 7 * 86400)):
         reason = tr("auto_tried")
+    elif media.outcome(f, preset, db.outcomes(), s):
+        reason = tr("auto_outcome")
     if reason:
         log.info("Auto (%s) skipped: %s – %s", via, f["path"], reason)
         return reason
-    preset = s["auto_preset"] if s["auto_preset"] in config.PRESETS else "balanced"
     sample = db.get_sample(f"{kind}:{arr_id}:{preset}")
     enc = await encoders.resolve()
     e = media.estimate(f, f["size"], preset, media.Model(enc["encoder"]), sample)

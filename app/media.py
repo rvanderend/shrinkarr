@@ -119,6 +119,22 @@ def needs_work(f: dict, s: dict | None = None) -> bool:
     return not f["efficient"] or audio_work(f, s)
 
 
+def outcome(f: dict, preset: str, outcomes: dict, s: dict | None = None) -> dict | None:
+    """Why an earlier attempt on this very file means it isn't worth trying again: damaged, or too little
+    gain with this preset (at the current minimum). None if it is."""
+    o = outcomes.get((f["kind"], f["fileId"]))
+    if not o or o["size"] != f["size"]:
+        return None  # never tried, or another file since
+    if o["result"] == "damaged":
+        return {"result": "damaged"}
+    if o["preset"] != preset or not o["size_after"]:
+        return None
+    pct = (1 - o["size_after"] / f["size"]) * 100
+    if pct >= (s or db.get_settings())["min_savings"]:
+        return None
+    return {"result": "no_gain", "pct": round(pct)}
+
+
 def eac3_rate(channels: int) -> int:
     ch = min(int(channels or 2), 6)
     return config.EAC3_BITRATE[1] if ch <= 1 else config.EAC3_BITRATE[2] if ch == 2 else config.EAC3_BITRATE[6]
@@ -541,8 +557,8 @@ async def run_ffmpeg(cmd: list[str], on_progress=None, proc_holder: dict | None 
     return last
 
 
-def parse_progress(pr: dict) -> tuple[float, float, float, int]:
-    """(seconds, fps, speed, bytes) from a -progress block."""
+def parse_progress(pr: dict) -> tuple[float, float, float, int, int]:
+    """(seconds, fps, speed, bytes, frames) from a -progress block."""
     us = pr.get("out_time_us") or pr.get("out_time_ms") or "0"
     try:
         sec = max(int(us), 0) / 1e6
@@ -558,7 +574,7 @@ def parse_progress(pr: dict) -> tuple[float, float, float, int]:
         size = int(pr.get("total_size") or 0)
     except ValueError:
         size = 0
-    return sec, fl(pr.get("fps")), fl(pr.get("speed")), size
+    return sec, fl(pr.get("fps")), fl(pr.get("speed")), size, int(fl(pr.get("frame")))
 
 
 async def extract_cc(src: str, dst: str, workdir: Path) -> bool:

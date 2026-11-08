@@ -277,7 +277,7 @@ function updateStats() {
         <div class="mid"><span class="pct num">${pct}%</span><span class="lbl">${t('ring.toGain')}</span></div>
       </div>
       <div class="ring-nums">
-        <div><div class="legend"><i style="background:#fff"></i>${t('ring.toSave')}</div><div class="big num">~${bytes(todo)}</div></div>
+        <div><div class="legend"><i style="background:#fff"></i>${t('ring.toSave')}</div><div class="big num">${conv.length ? '~' + bytes(todo) : t('ring.nothing')}</div></div>
         <div class="ring-pair">
           <div><div class="legend"><i style="background:#86efac"></i>${t('ring.saved')}</div><div class="val num">${bytes(saved)}</div></div>
           <div><div class="legend"><i style="background:rgba(255,255,255,.45)"></i>${t('ring.remains')}</div><div class="val num">~${bytes(est)}</div></div>
@@ -286,7 +286,7 @@ function updateStats() {
     </div>
     <div class="ring-strip">
       <div title="${esc(t('ring.counts', { movies, series }))}"><div class="l">${t('ring.library')}</div><div class="v num">${bytes(size)}</div></div>
-      <div><div class="l">${t('ring.time')}</div><div class="v num">~${dur(secs)}</div></div>
+      <div><div class="l">${t('ring.time')}</div><div class="v num">${conv.length ? '~' + dur(secs) : '–'}</div></div>
       <div><div class="l">${t('ring.todo')}</div><div class="v num">${t('ring.titles', { n: conv.length })}</div></div>
     </div>`;
 }
@@ -298,7 +298,9 @@ function tileHtml(i) {
   const isHevc = ['HEVC', 'AV1', 'VP9'].includes(i.codec);
   const sub = i.kind === 'movie' ? `${i.year || ''}${i.rootLabel ? ' · ' + esc(i.rootLabel) : ''}` : `${i.year || ''} · ${t('tile.eps', { n: i.fileCount })}`;
   let foot;
-  if (eff) foot = i.saved ? `<span class="good">✓ ${t('tile.saved', { size: bytes(i.saved) })}</span>` : `<span>${t('tile.efficient')}</span>`;
+  if (eff && i.damaged) foot = `<span class="bad">${t('tile.damaged')}</span>`;
+  else if (eff && i.saved) foot = `<span class="good">✓ ${t('tile.saved', { size: bytes(i.saved) })}</span>`;
+  else if (eff) foot = `<span>${i.noGain ? t('tile.noGain') : t('tile.efficient')}</span>`;
   else foot = `<span class="good num">−${bytes(savings)}</span><span class="num">~${dur(i.estSeconds)}</span>`;
   const partial = !eff && i.kind === 'series' && i.convertible < i.fileCount ? ` · ${t('tile.todo', { n: i.convertible })}` : '';
   return `<div class="tile ${eff ? 'dim' : ''} ${S.selected.has(i.key) ? 'selected' : ''}" data-key="${i.key}" tabindex="0">
@@ -408,7 +410,10 @@ async function openDetail(kind, id, preset) {
     if (!S.detail || S.detail.id !== id) return;
     const prevSel = S.detail.sel;
     S.detail.data = d;
-    S.detail.sel = prevSel || new Set(d.files.filter((f) => f.convertible && !f.job).map((f) => f.fileId));
+    // Keep the picked files that can still be converted; none (another preset may open up files): all of them.
+    const open = d.files.filter((f) => f.convertible && !f.job).map((f) => f.fileId);
+    const kept = prevSel ? open.filter((x) => prevSel.has(x)) : [];
+    S.detail.sel = new Set(kept.length ? kept : open);
     renderDetail();
   } catch (e) {
     drawer.innerHTML = `<button class="icon-btn close-btn" id="close-btn" aria-label="${t('common.close')}">${I.x}</button><div class="empty">${esc(e.message)}</div>`;
@@ -437,6 +442,23 @@ function fileDetails(f) {
   </dl>`;
 }
 
+const outcomeBadge = (o) => (o ? `<span class="badge ${o.result === 'damaged' ? 'bad' : 'warn'}">${t(o.result === 'damaged' ? 'tile.damaged' : 'tile.noGain')}</span>` : '');
+
+// Nothing to convert because of earlier attempts: say why, and keep the presets (another one may gain enough).
+function triedBanner(d, tried) {
+  const damaged = tried.filter((f) => f.outcome.result === 'damaged');
+  const noGain = tried.filter((f) => f.outcome.result === 'no_gain');
+  const lines = [];
+  if (damaged.length) lines.push(d.kind === 'series' ? t('detail.damagedN', { n: damaged.length }) : t('detail.damaged'));
+  if (noGain.length) {
+    const pct = noGain[0].outcome.pct;
+    lines.push(d.kind === 'series' ? t('detail.noGainN', { n: noGain.length })
+      : pct < 0 ? t('detail.grew', { pct: -pct }) : t('detail.noGain', { pct }));
+  }
+  return `<div class="banner warn"><div>${lines.join('<br>')}</div>
+    ${noGain.length ? `<div class="seg" id="d-preset">${['high', 'balanced', 'max'].map((k) => `<button data-v="${k}" class="${d.preset === k ? 'on' : ''}">${presetLabel(k)}</button>`).join('')}</div>` : ''}</div>`;
+}
+
 const jobBadge = (j) => (j ? `<span class="badge accent" data-job="${j.id}">${jobBadgeInner(j)}</span>` : '');
 function jobBadgeInner(j) {
   return j.status === 'running' ? `<span class="spinner" style="width:10px;height:10px;border-width:2px"></span> ${esc(stage(j.stage))} ${Math.round((j.progress || 0) * 100)}%`
@@ -454,6 +476,7 @@ function updateDetailBadges() {
 function renderDetail() {
   const { data: d, sel } = S.detail;
   const conv = d.files.filter((f) => f.convertible);
+  const tried = d.files.filter((f) => f.outcome && !f.job);
   // When everything left to convert is already queued or running, estimate those files instead of an empty selection.
   const queuedOnly = conv.length > 0 && conv.every((f) => f.job);
   const chosen = queuedOnly ? conv : d.files.filter((f) => sel.has(f.fileId));
@@ -486,7 +509,7 @@ function renderDetail() {
             <label class="file">
               <input type="checkbox" class="cb" data-file="${f.fileId}" ${sel.has(f.fileId) ? 'checked' : ''} ${f.convertible && !f.job ? '' : 'disabled'}>
               <div style="min-width:0"><div class="name">${esc(f.label)}</div>
-                <div class="det"><span class="badge ${f.convertible ? '' : 'good'}">${esc(f.codecLabel)}</span>${esc(f.bucket)} ${jobBadge(f.job)}</div></div>
+                <div class="det"><span class="badge ${f.convertible || f.outcome ? '' : 'good'}">${esc(f.codecLabel)}</span>${esc(f.bucket)} ${jobBadge(f.job)}${f.job ? '' : outcomeBadge(f.outcome)}</div></div>
               <div class="sz num">${bytes(f.size)}${f.convertible ? `<br><span class="est">~${bytes(f.estSize)}</span>` : ''}</div>
             </label>`).join('')}</div>
         </details>`;
@@ -525,7 +548,7 @@ function renderDetail() {
             : `<button class="btn grad lg" id="go-btn" ${chosen.length ? '' : 'disabled'}>${I.shrink} ${t('common.shrink')}${isSeries ? ` (${chosen.length})` : ''}</button>`}
           <button class="btn lg" id="sample-btn" title="${t('detail.sampleTitle')}">${I.flask} ${t('detail.sample')}</button>
         </div>
-      </div>` : `<div class="banner info">${icon('check', 18)} ${isSeries ? t('detail.allEfficientSeries') : t('detail.allEfficientMovie')}</div>`}
+      </div>` : tried.length ? triedBanner(d, tried) : `<div class="banner info">${icon('check', 18)} ${isSeries ? t('detail.allEfficientSeries') : t('detail.allEfficientMovie')}</div>`}
       ${filesHtml}
       ${hist}
     </div>`;
@@ -720,7 +743,8 @@ function drawHistory() {
       } else if (b.dataset.redownload) {
         const app = b.dataset.app;
         if (!confirm(t('hist.redownloadConfirm', { app }))) return;
-        await post(`/api/jobs/${b.dataset.redownload}/redownload`); toast(t('hist.redownloaded', { app }), 'good');
+        const r = await post(`/api/jobs/${b.dataset.redownload}/redownload`);
+        toast(t(r.blocklisted ? 'hist.redownloadedOther' : 'hist.redownloaded', { app }), 'good');
         setTimeout(() => loadLibrary(), 25000);
       }
       await pollJobs();
@@ -749,6 +773,8 @@ export async function pollJobs() {
   S.jobs = J;
   const run = J.queue.find((j) => j.status === 'running');
   const qc = $('#queue-count'); qc.hidden = !J.queue.length; qc.textContent = J.queue.length;
+  const hc = $('#history-count'); hc.hidden = !J.totals.failed; hc.textContent = J.totals.failed;
+  hc.title = t('hist.failedCount', { n: J.totals.failed });
   const mp = $('#mini-progress');
   if (run && S.route !== 'queue') {
     mp.hidden = false;

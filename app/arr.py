@@ -345,30 +345,59 @@ async def restore_monitored(kind: str, state: dict) -> int:
     return len(lost)
 
 
-async def redownload(kind: str, arr_id: int, file_id: int):
+async def _grab_of(kind: str, arr_id: int, file_id: int) -> int | None:
+    """History id of the grab that brought this file in, found through its import (same download id)."""
+    if kind == "movie":
+        hist = await api("radarr", "GET", "/history/movie", params={"movieId": arr_id})
+    else:
+        hist = await api("sonarr", "GET", "/history/series", params={"seriesId": arr_id})
+    imp = next((e for e in hist or [] if e.get("eventType") == "downloadFolderImported" and e.get("downloadId")
+                and str((e.get("data") or {}).get("fileId")) == str(file_id)), None)
+    if not imp:
+        return None
+    grab = next((e for e in hist if e.get("eventType") == "grabbed" and e.get("downloadId") == imp["downloadId"]), None)
+    return grab["id"] if grab else None
+
+
+async def redownload(kind: str, arr_id: int, file_id: int) -> bool:
     """Deletes a (damaged) file in Sonarr/Radarr and searches for it again.
 
+    The release it came from is marked as failed first, which puts it on the blocklist: otherwise
+    the search often grabs the same broken release again. That only works when the file came in
+    through a download (not a manual copy); returns whether it was blocklisted.
     The movie or episodes are monitored again first: deleting a file can unmonitor them, and
     a later automatic search should also pick them up. A file that is already gone (a second try
     after a failed search) is fine.
     """
-    async def delete(app, path):
+    app = "radarr" if kind == "movie" else "sonarr"
+
+    async def delete(path):
         try:
             await api(app, "DELETE", path)
         except httpx.HTTPStatusError as e:
             if e.response.status_code != 404:
                 raise
 
+    blocklisted = False
+    try:
+        grab = await _grab_of(kind, arr_id, file_id)
+        if grab:
+            await api(app, "POST", f"/history/failed/{grab}")
+            blocklisted = True
+    except httpx.HTTPError:
+        log.warning("Blocklisting the release of %s file %s failed", app, file_id, exc_info=True)
+
     if kind == "movie":
-        await delete("radarr", f"/moviefile/{file_id}")
+        await delete(f"/moviefile/{file_id}")
         await api("radarr", "PUT", "/movie/editor", json={"movieIds": [arr_id], "monitored": True})
         await api("radarr", "POST", "/command", json={"name": "MoviesSearch", "movieIds": [arr_id]})
     else:
         ids = [e["id"] for e in await api("sonarr", "GET", "/episode", params={"episodeFileId": file_id})]
-        await delete("sonarr", f"/episodefile/{file_id}")
+        await delete(f"/episodefile/{file_id}")
         if ids:
             await api("sonarr", "PUT", "/episode/monitor", json={"episodeIds": ids, "monitored": True})
             await api("sonarr", "POST", "/command", json={"name": "EpisodeSearch", "episodeIds": ids})
+    return blocklisted
 
 
 # --- covers -----------------------------------------------------------------

@@ -162,10 +162,15 @@ def _saved_by_item() -> dict[tuple, int]:
     return out
 
 
-def _file_view(f: dict, preset: str, model: media.Model, sample, active) -> dict:
+def _file_view(f: dict, preset: str, model: media.Model, sample, active, outcomes) -> dict:
     e = media.estimate(f, f["size"], preset, model, sample)
+    # Tried before: damaged, or too little gain. Then there is nothing to save, whatever the estimate says.
+    tried = media.outcome(f, preset, outcomes) if e["convertible"] else None
+    if tried:
+        e = {"size": f["size"], "seconds": 0, "convertible": False}
     job = active.get((f["kind"], f["fileId"]))
     return {**f, "estSize": e["size"], "estSeconds": e["seconds"], "convertible": e["convertible"], "job": job,
+            "outcome": tried,
             "toEac3": e["convertible"] and media.audio_work(f), "dropLangs": _drop_langs(f) if e["convertible"] else []}
 
 
@@ -178,9 +183,9 @@ def _drop_langs(f: dict) -> list[str]:
     return sorted({x for x in langs if x not in keep and x not in media.UNKNOWN_LANGS})
 
 
-def _summary(item: dict, preset: str, model: media.Model, active, saved) -> dict:
+def _summary(item: dict, preset: str, model: media.Model, active, saved, outcomes) -> dict:
     sample = db.get_sample(f"{item['kind']}:{item['id']}:{preset}")
-    files = [_file_view(f, preset, model, sample, active) for f in item["files"]]
+    files = [_file_view(f, preset, model, sample, active, outcomes) for f in item["files"]]
     size = sum(f["size"] for f in files)
     conv = [f for f in files if f["convertible"]]
     codecs: Counter = Counter()
@@ -204,6 +209,8 @@ def _summary(item: dict, preset: str, model: media.Model, active, saved) -> dict
         "running": any(f["job"] and f["job"]["status"] == "running" for f in files),
         "saved": saved.get((item["kind"], item["id"]), 0),
         "dts": sum(1 for f in files if f.get("dts")),
+        "noGain": sum(1 for f in files if f["outcome"] and f["outcome"]["result"] == "no_gain"),
+        "damaged": sum(1 for f in files if f["outcome"] and f["outcome"]["result"] == "damaged"),
         "sampled": bool(sample),
         "_files": files,
     }
@@ -216,10 +223,10 @@ async def _model() -> media.Model:
 async def _library_items(preset: str) -> tuple[list[dict], media.Model]:
     if not arr.LIB.refreshed:
         await arr.LIB.refresh()
-    model, active, saved = await _model(), _active_jobs(), _saved_by_item()
+    model, active, saved, outcomes = await _model(), _active_jobs(), _saved_by_item(), db.outcomes()
     items = []
     for it in [*arr.LIB.movies.values(), *arr.LIB.series.values()]:
-        s = _summary(it, preset, model, active, saved)
+        s = _summary(it, preset, model, active, saved, outcomes)
         s.pop("_files")
         items.append(s)
     return items, model
@@ -241,7 +248,7 @@ async def item_detail(kind: str, item_id: int, preset: str | None = None):
     it = arr.LIB.item(kind, item_id)
     if not it:
         raise HTTPException(404, "not found")
-    s = _summary(it, preset, await _model(), _active_jobs(), _saved_by_item())
+    s = _summary(it, preset, await _model(), _active_jobs(), _saved_by_item(), db.outcomes())
     s["files"] = s.pop("_files")
     s.update(overview=it.get("overview"), genres=it.get("genres"), network=it.get("network", ""),
              fanart=it["images"].get("fanart"), preset=preset)
@@ -319,7 +326,7 @@ class EnqueueReq(BaseModel):
 @app.post("/api/jobs")
 async def enqueue(req: EnqueueReq):
     preset = _preset(req.preset)
-    model = await _model()
+    model, outcomes = await _model(), db.outcomes()
     added = read_only = 0
     for ref in req.items:
         it = arr.LIB.item(ref.kind, ref.id)
@@ -330,6 +337,9 @@ async def enqueue(req: EnqueueReq):
             if ref.fileIds is not None and f["fileId"] not in ref.fileIds:
                 continue
             if not media.needs_work(f) or db.active_job_for(f["kind"], f["fileId"]):
+                continue
+            # A whole title skips files that were tried before; picked files (the detail view) go anyway.
+            if ref.fileIds is None and media.outcome(f, preset, outcomes):
                 continue
             if not writable(Path(f["path"]).parent):
                 read_only += 1
@@ -353,8 +363,9 @@ JOB_COLS = ("id, kind, arr_id, file_id, title, subtitle, path, preset, status, s
 async def jobs():
     queue = db.q(f"SELECT {JOB_COLS} FROM jobs WHERE status IN ('running','queued') "
                  "ORDER BY status='running' DESC, position")
+    # Failed jobs first: they need attention (retry, redownload or remove).
     recent = db.q(f"SELECT {JOB_COLS} FROM jobs WHERE status NOT IN ('running','queued') "
-                  "ORDER BY finished DESC LIMIT 200")
+                  "ORDER BY status='failed' DESC, finished DESC LIMIT 200")
     tot = db.one("SELECT COUNT(*) AS n, COALESCE(SUM(size_before - size_after), 0) AS saved, "
                  "COALESCE(SUM(size_before), 0) AS before FROM jobs WHERE status='done'")
     failed = db.one("SELECT COUNT(*) AS n FROM jobs WHERE status='failed'")["n"]
@@ -463,7 +474,7 @@ async def job_undo(job_id: int):
 
 @app.post("/api/jobs/{job_id}/redownload")
 async def job_redownload(job_id: int):
-    """Deletes a damaged original in Sonarr/Radarr and searches for it again."""
+    """Blocklists the release of a damaged original, deletes it in Sonarr/Radarr and searches again."""
     from .i18n import tr
     j = db.one("SELECT * FROM jobs WHERE id=?", (job_id,))
     if not j or j["status"] != "failed" or j["stage"] != "damaged":
@@ -472,15 +483,16 @@ async def job_redownload(job_id: int):
     if not arr.configured(app_name):
         raise HTTPException(400, f"{app_name} not configured")
     try:
-        await arr.redownload(j["kind"], j["arr_id"], j["file_id"])
+        blocklisted = await arr.redownload(j["kind"], j["arr_id"], j["file_id"])
     except httpx.HTTPStatusError as e:
         raise HTTPException(502, f"{app_name}: {e.response.status_code} {e.response.text[:200]}") from e
     except httpx.HTTPError as e:
         raise HTTPException(502, f"{app_name}: {e}") from e
     db.update_job(job_id, status="redownload", stage="redownload",
-                  message=tr("redownload", app="Radarr" if j["kind"] == "movie" else "Sonarr"))
+                  message=tr("redownload_blocklisted" if blocklisted else "redownload",
+                             app="Radarr" if j["kind"] == "movie" else "Sonarr"))
     asyncio.create_task(arr.LIB.refresh_item("movie" if j["kind"] == "movie" else "series", j["arr_id"]))
-    return {"ok": True}
+    return {"ok": True, "blocklisted": blocklisted}
 
 
 class RenameIds(BaseModel):

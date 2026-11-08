@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#f5f6fa" media="(prefers-color-scheme: light)">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/static/app.css?v=10">
+  <link rel="stylesheet" href="/static/app.css?v=11">
   <script>
     try { const t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
   </script>
@@ -22,7 +22,7 @@
     <nav class="tabs" id="tabs">
       <a href="#/" data-route="library" data-i18n="nav.library">Library</a>
       <a href="#/queue" data-route="queue"><span data-i18n="nav.queue">Queue</span> <span class="count" id="queue-count" hidden></span></a>
-      <a href="#/history" data-route="history" data-i18n="nav.history">History</a>
+      <a href="#/history" data-route="history"><span data-i18n="nav.history">History</span> <span class="count bad" id="history-count" hidden></span></a>
       <a href="#/settings" data-route="settings" data-i18n="nav.settings">Settings</a>
     </nav>
     <div class="topbar-right">

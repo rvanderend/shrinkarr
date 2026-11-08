@@ -12,7 +12,7 @@ const STR = {
     'st.idleQueue': 'Idle', 'st.setup': 'Not set up yet',
     'chip.active': 'active', 'chip.paused': 'paused', 'chip.busy': 'busy',
     queued: '{n} in the queue', queueEmpty: 'The queue is empty', together: 'total ~{t}', left: '{t} left', thenPause: 'then pause',
-    toGain: 'to gain', toSave: 'To save', saved: 'Saved', remains: 'Remains', toSaveShort: 'to save', savedShort: 'saved',
+    toGain: 'to gain', toSave: 'To save', saved: 'Saved', remains: 'Remains', toSaveShort: 'to save', savedShort: 'saved', nothingLeft: 'Nothing left',
     library: 'Library', encTime: 'Encode time', todo: 'To do', titles: '{n} titles', done: 'Done', files: '{n} files',
     quality: 'Quality: {q}', 'p.high': 'High quality', 'p.balanced': 'Balanced', 'p.max': 'Maximum savings',
     pause: 'Pause', resume: 'Resume', startNow: 'Start now', nothing: 'Nothing to convert', pausedLine: 'Paused',
@@ -37,7 +37,7 @@ const STR = {
     'st.idleQueue': 'Niets bezig', 'st.setup': 'Nog niet ingesteld',
     'chip.active': 'actief', 'chip.paused': 'pauze', 'chip.busy': 'bezig',
     queued: '{n} in de wachtrij', queueEmpty: 'De wachtrij is leeg', together: 'samen ~{t}', left: 'nog {t}', thenPause: 'daarna pauze',
-    toGain: 'te winnen', toSave: 'Te besparen', saved: 'Bespaard', remains: 'Resterend', toSaveShort: 'te besparen', savedShort: 'bespaard',
+    toGain: 'te winnen', toSave: 'Te besparen', saved: 'Bespaard', remains: 'Resterend', toSaveShort: 'te besparen', savedShort: 'bespaard', nothingLeft: 'Niets meer',
     library: 'Bibliotheek', encTime: 'Omzettijd', todo: 'Te doen', titles: '{n} titels', done: 'Klaar', files: '{n} bestanden',
     quality: 'Kwaliteit: {q}', 'p.high': 'Hoge kwaliteit', 'p.balanced': 'Gebalanceerd', 'p.max': 'Maximale besparing',
     pause: 'Pauzeren', resume: 'Hervatten', startNow: 'Nu starten', nothing: 'Niets aan het omzetten', pausedLine: 'Gepauzeerd',
@@ -218,6 +218,9 @@ class ShrinkarrCard extends HTMLElement {
     if (b == null) return '–';
     return b >= 1e12 ? `${this._nf(b / 1e12, 2)} TB` : b >= 1e9 ? `${this._nf(b / 1e9, 1)} GB` : `${this._nf(b / 1e6)} MB`;
   }
+  _toSave(L) {
+    return L.titlesTodo ? `~${this._bytes(L.toSave)}` : this._t('nothingLeft');
+  }
   _dur(s) {
     if (s == null) return '–';
     const m = Math.round(Math.max(0, s) / 60);
@@ -276,7 +279,7 @@ class ShrinkarrCard extends HTMLElement {
       <div class="mid">
         ${this._ring([[L.saved / orig, GREEN], [L.toSave / orig, PURPLE]], `${L.pct}<small>%</small>`, this._t('toGain'))}
         <div class="nums">
-          <div><div class="lg"><i style="background:rgb(${PURPLE})"></i>${this._t('toSave')}</div><div class="big">${L.toSave ? '~' : ''}${this._bytes(L.toSave)}</div></div>
+          <div><div class="lg"><i style="background:rgb(${PURPLE})"></i>${this._t('toSave')}</div><div class="big">${this._toSave(L)}</div></div>
           <div class="pair">
             <div><div class="lg"><i style="background:rgb(${GREEN})"></i>${this._t('saved')}</div><div class="val">${this._bytes(L.saved)}</div></div>
             <div><div class="lg"><i style="background:var(--track)"></i>${this._t('remains')}</div><div class="val">${L.estSize ? '~' : ''}${this._bytes(L.estSize)}</div></div>
@@ -331,7 +334,7 @@ class ShrinkarrCard extends HTMLElement {
     return `<ha-card class="cmp" style="--k: ${k}">
       ${this._ring([[L.saved / orig, GREEN], [L.toSave / orig, PURPLE]], `${L.pct}<small>%</small>`, '')}
       <div class="link" data-act="open"><div class="t">Shrinkarr</div>
-        <div class="s"><b>${L.toSave ? '~' : ''}${this._bytes(L.toSave)}</b> ${this._t('toSaveShort')} · ${this._bytes(L.saved)} ${this._t('savedShort')}</div></div>
+        <div class="s"><b>${this._toSave(L)}</b> ${this._t('toSaveShort')} · ${this._bytes(L.saved)} ${this._t('savedShort')}</div></div>
       <button class="ib ${Q.paused ? 'on' : ''}" data-act="${Q.paused ? 'resume' : 'pause'}" title="${this._t(Q.paused ? 'resume' : 'pause')}"
         aria-label="${this._t(Q.paused ? 'resume' : 'pause')}"><ha-icon icon="mdi:${Q.paused ? 'play' : 'pause'}"></ha-icon></button>
       ${this._p.available ? '' : `<div class="warnline" style="grid-column:1/-1;margin:0">${this._t('offline')}</div>`}

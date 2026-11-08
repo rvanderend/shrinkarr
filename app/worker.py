@@ -22,6 +22,10 @@ log = logging.getLogger("shrinkarr.worker")
 class Skip(Exception):
     """Not an error, but the original stays (for example too little gain)."""
 
+    def __init__(self, msg: str, size_after: int | None = None):
+        super().__init__(msg)
+        self.size_after = size_after  # too little gain: the size of the new version
+
 
 class Damaged(Exception):
     """The source file is damaged: failed, with a button in the history to download it again."""
@@ -178,8 +182,11 @@ class Worker:
             db.update_job(jid, status="cancelled", stage="cancelled", finished=time.time())
         except Skip as e:
             db.update_job(jid, status="skipped", stage="skipped", message=str(e), finished=time.time())
+            if e.size_after:
+                db.set_outcome(job, "no_gain", e.size_after)
         except Damaged as e:
             db.update_job(jid, status="failed", stage="damaged", message=str(e), finished=time.time())
+            db.set_outcome(job, "damaged")
         except media.FFmpegError as e:
             if self.cancel_requested:
                 db.update_job(jid, status="cancelled", stage="cancelled", finished=time.time())
@@ -257,7 +264,11 @@ class Worker:
         last_write = [0.0]
 
         async def on_progress(pr):
-            sec, fps, speed, size = media.parse_progress(pr)
+            sec, fps, speed, size, frames = media.parse_progress(pr)
+            # ffmpeg's time stops at the last packet of a stream that ends early (a subtitle track with one
+            # line), while the frames keep counting.
+            if frames / vi["fps"] > sec:
+                sec, speed = frames / vi["fps"], fps / vi["fps"]
             now = time.monotonic()
             if now - last_write[0] < 1 and pr.get("progress") != "end":
                 return
@@ -331,8 +342,8 @@ class Worker:
         # Converting only the audio is about playback, not space: the minimum savings don't apply.
         if not audio_only and saved_pct < s["min_savings"]:
             if saved_pct < 0:
-                raise Skip(tr("grew", pct=-saved_pct))
-            raise Skip(tr("too_little", pct=saved_pct, min=s["min_savings"]))
+                raise Skip(tr("grew", pct=-saved_pct), new_size)
+            raise Skip(tr("too_little", pct=saved_pct, min=s["min_savings"]), new_size)
 
         # 5. Don't replace while someone is watching this file in Plex
         await self._wait_for_viewers(jid, src)
