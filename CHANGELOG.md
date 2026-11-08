@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.6
 
 - **Codec in the file name** (Settings → Encoding, off by default): a converted file gets the words for what changed, in the style of its name: `x264` → `x265`, `H.264` → `H.265`, `AVC` → `HEVC`, and `DTS…` → `DDP5.1` when every DTS track became E-AC3. Title, quality, source and release group stay, and a name without such a word stays as it is. Subtitles, `.nfo` and artwork with the same name are renamed along, and *Undo* puts them back. (#16)
 - **Earlier conversions:** under the same option, *Check earlier conversions* lists the converted files whose name would change, read from the `SHRINKARR` tag in each file (so the same rules apply), and renames them after a confirm, the same way as after a conversion. (#16)
